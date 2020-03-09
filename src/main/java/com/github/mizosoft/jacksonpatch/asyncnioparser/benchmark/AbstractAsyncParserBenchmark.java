@@ -25,9 +25,9 @@ import org.openjdk.jmh.infra.Blackhole;
 // These annotations are inherited
 @State(Scope.Benchmark)
 @Fork(value = 1, warmups = 1)
-@Threads(1)
-@Warmup(iterations = 4, time = 5)
-@Measurement(iterations = 6, time = 5)
+@Threads(Threads.MAX)
+@Warmup(iterations = 5, time = 5)
+@Measurement(iterations = 10, time = 5)
 @OutputTimeUnit(TimeUnit.SECONDS)
 @BenchmarkMode(Mode.Throughput)
 public class AbstractAsyncParserBenchmark {
@@ -135,10 +135,10 @@ public class AbstractAsyncParserBenchmark {
   // Factory for each patch variant, including non-patched one
   @SuppressWarnings("unused")
   public enum JsonFactoryPatchType {
-    NIO_WRAPPING {
+    NON_PATCHED {
       @Override
       PatchedJsonFactory createFactory() {
-        return new NioWrappingParserPatch();
+        return new NonPatchedFactory();
       }
     },
     TOGGLING {
@@ -147,10 +147,10 @@ public class AbstractAsyncParserBenchmark {
         return new TogglingParserPatch();
       }
     },
-    NON_PATCHED {
+    NIO_WRAPPING {
       @Override
       PatchedJsonFactory createFactory() {
-        return new NonPatchedFactory();
+        return new NioWrappingParserPatch();
       }
     };
 

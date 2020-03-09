@@ -21,7 +21,6 @@ import org.openjdk.jmh.runner.options.Options;
 import org.openjdk.jmh.runner.options.OptionsBuilder;
 
 /** General benchmark for per-byte access options (array, heap buffer, direct buffer). */
-@State(Scope.Benchmark)
 @Fork(value = 1)
 @Threads(Threads.MAX)
 @Warmup(iterations = 2, time = 5)
