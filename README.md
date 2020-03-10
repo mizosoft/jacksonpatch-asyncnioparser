@@ -34,6 +34,16 @@ AsyncParserBenchmark_byteBufferChunks.readChunks      TOGGLING   /payload/jarray
 AsyncParserBenchmark_byteBufferChunks.readChunks      TOGGLING  /payload/jobject_large.json  thrpt   10    813.049 ±   5.646  ops/s
 ```
 
+### Feeding mixed `byte[]` and `ByteBuffer` chunks
+
+```
+Benchmark                                         (patch)            (payloadLocation)   Mode  Cnt      Score     Error  Units
+AsyncParserBenchmark_mixedChunks.readChunks  NIO_WRAPPING   /payload/jarray_small.json  thrpt   10  30863.264 ±  24.033  ops/s
+AsyncParserBenchmark_mixedChunks.readChunks  NIO_WRAPPING  /payload/jobject_large.json  thrpt   10    813.162 ±   0.531  ops/s
+AsyncParserBenchmark_mixedChunks.readChunks      TOGGLING   /payload/jarray_small.json  thrpt   10  27712.643 ± 244.589  ops/s
+AsyncParserBenchmark_mixedChunks.readChunks      TOGGLING  /payload/jobject_large.json  thrpt   10    772.887 ±  17.037  ops/s
+```
+
 ### Single-byte `byte[]/ByteBuffer` accessor
 
 ```
