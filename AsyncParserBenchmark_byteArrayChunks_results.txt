@@ -1,0 +1,346 @@
+# Detecting actual CPU count: 8 detected
+# JMH version: 1.23
+# VM version: JDK 13.0.2, OpenJDK 64-Bit Server VM, 13.0.2+8
+# VM invoker: C:\Program Files\Java\openjdk-13.0.2\bin\java.exe
+# VM options: <none>
+# Warmup: 5 iterations, 5 s each
+# Measurement: 10 iterations, 5 s each
+# Timeout: 10 min per iteration
+# Threads: 8 threads, will synchronize iterations
+# Benchmark mode: Throughput, ops/time
+# Benchmark: com.github.mizosoft.jacksonpatch.asyncnioparser.benchmark.AsyncParserBenchmark_byteArrayChunks.readChunks
+# Parameters: (patch = NON_PATCHED, payloadLocation = /payload/jarray_small.json)
+
+# Run progress: 0.00% complete, ETA 00:15:00
+# Warmup Fork: 1 of 1
+# Warmup Iteration   1: 32249.697 ops/s
+# Warmup Iteration   2: 34143.165 ops/s
+# Warmup Iteration   3: 33986.041 ops/s
+# Warmup Iteration   4: 34045.348 ops/s
+# Warmup Iteration   5: 33911.067 ops/s
+Iteration   1: 33927.857 ops/s
+Iteration   2: 33984.451 ops/s
+Iteration   3: 33970.597 ops/s
+Iteration   4: 33962.757 ops/s
+Iteration   5: 33952.432 ops/s
+Iteration   6: 33977.502 ops/s
+Iteration   7: 33920.905 ops/s
+Iteration   8: 33964.145 ops/s
+Iteration   9: 34021.265 ops/s
+Iteration  10: 34003.034 ops/s
+
+# Run progress: 8.33% complete, ETA 00:13:51
+# Fork: 1 of 1
+# Warmup Iteration   1: 32067.310 ops/s
+# Warmup Iteration   2: 34381.611 ops/s
+# Warmup Iteration   3: 34889.460 ops/s
+# Warmup Iteration   4: 34932.224 ops/s
+# Warmup Iteration   5: 34952.799 ops/s
+Iteration   1: 34940.613 ops/s
+Iteration   2: 34843.637 ops/s
+Iteration   3: 34940.003 ops/s
+Iteration   4: 34972.346 ops/s
+Iteration   5: 34957.805 ops/s
+Iteration   6: 34955.461 ops/s
+Iteration   7: 34929.870 ops/s
+Iteration   8: 34884.206 ops/s
+Iteration   9: 34915.204 ops/s
+Iteration  10: 34947.010 ops/s
+
+
+Result "com.github.mizosoft.jacksonpatch.asyncnioparser.benchmark.AsyncParserBenchmark_byteArrayChunks.readChunks":
+  34928.616 ±(99.9%) 58.493 ops/s [Average]
+  (min, avg, max) = (34843.637, 34928.616, 34972.346), stdev = 38.690
+  CI (99.9%): [34870.122, 34987.109] (assumes normal distribution)
+
+
+# JMH version: 1.23
+# VM version: JDK 13.0.2, OpenJDK 64-Bit Server VM, 13.0.2+8
+# VM invoker: C:\Program Files\Java\openjdk-13.0.2\bin\java.exe
+# VM options: <none>
+# Warmup: 5 iterations, 5 s each
+# Measurement: 10 iterations, 5 s each
+# Timeout: 10 min per iteration
+# Threads: 8 threads, will synchronize iterations
+# Benchmark mode: Throughput, ops/time
+# Benchmark: com.github.mizosoft.jacksonpatch.asyncnioparser.benchmark.AsyncParserBenchmark_byteArrayChunks.readChunks
+# Parameters: (patch = NON_PATCHED, payloadLocation = /payload/jobject_large.json)
+
+# Run progress: 16.67% complete, ETA 00:12:35
+# Warmup Fork: 1 of 1
+# Warmup Iteration   1: 756.356 ops/s
+# Warmup Iteration   2: 921.790 ops/s
+# Warmup Iteration   3: 921.881 ops/s
+# Warmup Iteration   4: 921.689 ops/s
+# Warmup Iteration   5: 921.026 ops/s
+Iteration   1: 922.137 ops/s
+Iteration   2: 921.722 ops/s
+Iteration   3: 921.487 ops/s
+Iteration   4: 921.223 ops/s
+Iteration   5: 921.206 ops/s
+Iteration   6: 922.412 ops/s
+Iteration   7: 922.503 ops/s
+Iteration   8: 922.324 ops/s
+Iteration   9: 921.617 ops/s
+Iteration  10: 918.753 ops/s
+
+# Run progress: 25.00% complete, ETA 00:11:21
+# Fork: 1 of 1
+# Warmup Iteration   1: 850.173 ops/s
+# Warmup Iteration   2: 1019.219 ops/s
+# Warmup Iteration   3: 1019.759 ops/s
+# Warmup Iteration   4: 1019.093 ops/s
+# Warmup Iteration   5: 1019.207 ops/s
+Iteration   1: 1019.876 ops/s
+Iteration   2: 1019.470 ops/s
+Iteration   3: 1020.014 ops/s
+Iteration   4: 1019.858 ops/s
+Iteration   5: 1019.781 ops/s
+Iteration   6: 1020.487 ops/s
+Iteration   7: 1020.416 ops/s
+Iteration   8: 1019.599 ops/s
+Iteration   9: 1020.210 ops/s
+Iteration  10: 1020.512 ops/s
+
+
+Result "com.github.mizosoft.jacksonpatch.asyncnioparser.benchmark.AsyncParserBenchmark_byteArrayChunks.readChunks":
+  1020.022 ±(99.9%) 0.561 ops/s [Average]
+  (min, avg, max) = (1019.470, 1020.022, 1020.512), stdev = 0.371
+  CI (99.9%): [1019.462, 1020.583] (assumes normal distribution)
+
+
+# JMH version: 1.23
+# VM version: JDK 13.0.2, OpenJDK 64-Bit Server VM, 13.0.2+8
+# VM invoker: C:\Program Files\Java\openjdk-13.0.2\bin\java.exe
+# VM options: <none>
+# Warmup: 5 iterations, 5 s each
+# Measurement: 10 iterations, 5 s each
+# Timeout: 10 min per iteration
+# Threads: 8 threads, will synchronize iterations
+# Benchmark mode: Throughput, ops/time
+# Benchmark: com.github.mizosoft.jacksonpatch.asyncnioparser.benchmark.AsyncParserBenchmark_byteArrayChunks.readChunks
+# Parameters: (patch = TOGGLING, payloadLocation = /payload/jarray_small.json)
+
+# Run progress: 33.33% complete, ETA 00:10:05
+# Warmup Fork: 1 of 1
+# Warmup Iteration   1: 33033.109 ops/s
+# Warmup Iteration   2: 36037.457 ops/s
+# Warmup Iteration   3: 34920.412 ops/s
+# Warmup Iteration   4: 34890.978 ops/s
+# Warmup Iteration   5: 34985.761 ops/s
+Iteration   1: 35002.112 ops/s
+Iteration   2: 34060.351 ops/s
+Iteration   3: 34347.045 ops/s
+Iteration   4: 34194.388 ops/s
+Iteration   5: 34363.501 ops/s
+Iteration   6: 34120.388 ops/s
+Iteration   7: 33986.716 ops/s
+Iteration   8: 34705.809 ops/s
+Iteration   9: 34188.173 ops/s
+Iteration  10: 34573.179 ops/s
+
+# Run progress: 41.67% complete, ETA 00:08:50
+# Fork: 1 of 1
+# Warmup Iteration   1: 33013.553 ops/s
+# Warmup Iteration   2: 35225.603 ops/s
+# Warmup Iteration   3: 35328.132 ops/s
+# Warmup Iteration   4: 35105.062 ops/s
+# Warmup Iteration   5: 35239.148 ops/s
+Iteration   1: 35124.929 ops/s
+Iteration   2: 35017.493 ops/s
+Iteration   3: 35197.946 ops/s
+Iteration   4: 35305.054 ops/s
+Iteration   5: 34942.123 ops/s
+Iteration   6: 34947.234 ops/s
+Iteration   7: 35335.103 ops/s
+Iteration   8: 34860.475 ops/s
+Iteration   9: 35416.915 ops/s
+Iteration  10: 35150.278 ops/s
+
+
+Result "com.github.mizosoft.jacksonpatch.asyncnioparser.benchmark.AsyncParserBenchmark_byteArrayChunks.readChunks":
+  35129.755 ±(99.9%) 282.432 ops/s [Average]
+  (min, avg, max) = (34860.475, 35129.755, 35416.915), stdev = 186.812
+  CI (99.9%): [34847.323, 35412.188] (assumes normal distribution)
+
+
+# JMH version: 1.23
+# VM version: JDK 13.0.2, OpenJDK 64-Bit Server VM, 13.0.2+8
+# VM invoker: C:\Program Files\Java\openjdk-13.0.2\bin\java.exe
+# VM options: <none>
+# Warmup: 5 iterations, 5 s each
+# Measurement: 10 iterations, 5 s each
+# Timeout: 10 min per iteration
+# Threads: 8 threads, will synchronize iterations
+# Benchmark mode: Throughput, ops/time
+# Benchmark: com.github.mizosoft.jacksonpatch.asyncnioparser.benchmark.AsyncParserBenchmark_byteArrayChunks.readChunks
+# Parameters: (patch = TOGGLING, payloadLocation = /payload/jobject_large.json)
+
+# Run progress: 50.00% complete, ETA 00:07:34
+# Warmup Fork: 1 of 1
+# Warmup Iteration   1: 722.411 ops/s
+# Warmup Iteration   2: 1013.546 ops/s
+# Warmup Iteration   3: 1015.970 ops/s
+# Warmup Iteration   4: 1016.195 ops/s
+# Warmup Iteration   5: 1014.562 ops/s
+Iteration   1: 1016.646 ops/s
+Iteration   2: 1016.423 ops/s
+Iteration   3: 1016.394 ops/s
+Iteration   4: 1016.412 ops/s
+Iteration   5: 1000.551 ops/s
+Iteration   6: 1004.559 ops/s
+Iteration   7: 997.003 ops/s
+Iteration   8: 1013.262 ops/s
+Iteration   9: 1009.653 ops/s
+Iteration  10: 1011.359 ops/s
+
+# Run progress: 58.33% complete, ETA 00:06:18
+# Fork: 1 of 1
+# Warmup Iteration   1: 839.461 ops/s
+# Warmup Iteration   2: 1005.316 ops/s
+# Warmup Iteration   3: 1005.629 ops/s
+# Warmup Iteration   4: 1005.792 ops/s
+# Warmup Iteration   5: 1006.070 ops/s
+Iteration   1: 1005.447 ops/s
+Iteration   2: 1004.716 ops/s
+Iteration   3: 1006.593 ops/s
+Iteration   4: 1006.710 ops/s
+Iteration   5: 1006.695 ops/s
+Iteration   6: 1006.409 ops/s
+Iteration   7: 989.075 ops/s
+Iteration   8: 997.428 ops/s
+Iteration   9: 993.693 ops/s
+Iteration  10: 1005.437 ops/s
+
+
+Result "com.github.mizosoft.jacksonpatch.asyncnioparser.benchmark.AsyncParserBenchmark_byteArrayChunks.readChunks":
+  1002.220 ±(99.9%) 9.724 ops/s [Average]
+  (min, avg, max) = (989.075, 1002.220, 1006.710), stdev = 6.432
+  CI (99.9%): [992.496, 1011.944] (assumes normal distribution)
+
+
+# JMH version: 1.23
+# VM version: JDK 13.0.2, OpenJDK 64-Bit Server VM, 13.0.2+8
+# VM invoker: C:\Program Files\Java\openjdk-13.0.2\bin\java.exe
+# VM options: <none>
+# Warmup: 5 iterations, 5 s each
+# Measurement: 10 iterations, 5 s each
+# Timeout: 10 min per iteration
+# Threads: 8 threads, will synchronize iterations
+# Benchmark mode: Throughput, ops/time
+# Benchmark: com.github.mizosoft.jacksonpatch.asyncnioparser.benchmark.AsyncParserBenchmark_byteArrayChunks.readChunks
+# Parameters: (patch = NIO_WRAPPING, payloadLocation = /payload/jarray_small.json)
+
+# Run progress: 66.67% complete, ETA 00:05:02
+# Warmup Fork: 1 of 1
+# Warmup Iteration   1: 27156.154 ops/s
+# Warmup Iteration   2: 29963.366 ops/s
+# Warmup Iteration   3: 30023.824 ops/s
+# Warmup Iteration   4: 30280.817 ops/s
+# Warmup Iteration   5: 30694.683 ops/s
+Iteration   1: 30331.891 ops/s
+Iteration   2: 30141.227 ops/s
+Iteration   3: 30053.181 ops/s
+Iteration   4: 30349.519 ops/s
+Iteration   5: 30158.547 ops/s
+Iteration   6: 30119.336 ops/s
+Iteration   7: 29972.063 ops/s
+Iteration   8: 30056.038 ops/s
+Iteration   9: 30052.538 ops/s
+Iteration  10: 30209.191 ops/s
+
+# Run progress: 75.00% complete, ETA 00:03:47
+# Fork: 1 of 1
+# Warmup Iteration   1: 26865.498 ops/s
+# Warmup Iteration   2: 29118.179 ops/s
+# Warmup Iteration   3: 28585.638 ops/s
+# Warmup Iteration   4: 28497.933 ops/s
+# Warmup Iteration   5: 28611.497 ops/s
+Iteration   1: 29075.130 ops/s
+Iteration   2: 28867.742 ops/s
+Iteration   3: 28705.220 ops/s
+Iteration   4: 28678.596 ops/s
+Iteration   5: 28560.165 ops/s
+Iteration   6: 29065.965 ops/s
+Iteration   7: 28594.454 ops/s
+Iteration   8: 28544.051 ops/s
+Iteration   9: 28675.811 ops/s
+Iteration  10: 28735.397 ops/s
+
+
+Result "com.github.mizosoft.jacksonpatch.asyncnioparser.benchmark.AsyncParserBenchmark_byteArrayChunks.readChunks":
+  28750.253 ±(99.9%) 291.629 ops/s [Average]
+  (min, avg, max) = (28544.051, 28750.253, 29075.130), stdev = 192.894
+  CI (99.9%): [28458.625, 29041.882] (assumes normal distribution)
+
+
+# JMH version: 1.23
+# VM version: JDK 13.0.2, OpenJDK 64-Bit Server VM, 13.0.2+8
+# VM invoker: C:\Program Files\Java\openjdk-13.0.2\bin\java.exe
+# VM options: <none>
+# Warmup: 5 iterations, 5 s each
+# Measurement: 10 iterations, 5 s each
+# Timeout: 10 min per iteration
+# Threads: 8 threads, will synchronize iterations
+# Benchmark mode: Throughput, ops/time
+# Benchmark: com.github.mizosoft.jacksonpatch.asyncnioparser.benchmark.AsyncParserBenchmark_byteArrayChunks.readChunks
+# Parameters: (patch = NIO_WRAPPING, payloadLocation = /payload/jobject_large.json)
+
+# Run progress: 83.33% complete, ETA 00:02:31
+# Warmup Fork: 1 of 1
+# Warmup Iteration   1: 661.466 ops/s
+# Warmup Iteration   2: 790.799 ops/s
+# Warmup Iteration   3: 800.312 ops/s
+# Warmup Iteration   4: 799.857 ops/s
+# Warmup Iteration   5: 798.115 ops/s
+Iteration   1: 790.699 ops/s
+Iteration   2: 796.134 ops/s
+Iteration   3: 797.342 ops/s
+Iteration   4: 789.375 ops/s
+Iteration   5: 802.269 ops/s
+Iteration   6: 800.325 ops/s
+Iteration   7: 790.532 ops/s
+Iteration   8: 803.632 ops/s
+Iteration   9: 800.772 ops/s
+Iteration  10: 796.086 ops/s
+
+# Run progress: 91.67% complete, ETA 00:01:15
+# Fork: 1 of 1
+# Warmup Iteration   1: 651.315 ops/s
+# Warmup Iteration   2: 789.273 ops/s
+# Warmup Iteration   3: 830.518 ops/s
+# Warmup Iteration   4: 828.850 ops/s
+# Warmup Iteration   5: 831.359 ops/s
+Iteration   1: 820.231 ops/s
+Iteration   2: 829.482 ops/s
+Iteration   3: 830.177 ops/s
+Iteration   4: 826.566 ops/s
+Iteration   5: 822.051 ops/s
+Iteration   6: 825.990 ops/s
+Iteration   7: 828.177 ops/s
+Iteration   8: 823.551 ops/s
+Iteration   9: 833.145 ops/s
+Iteration  10: 826.599 ops/s
+
+
+Result "com.github.mizosoft.jacksonpatch.asyncnioparser.benchmark.AsyncParserBenchmark_byteArrayChunks.readChunks":
+  826.597 ±(99.9%) 5.906 ops/s [Average]
+  (min, avg, max) = (820.231, 826.597, 833.145), stdev = 3.907
+  CI (99.9%): [820.691, 832.503] (assumes normal distribution)
+
+
+# Run complete. Total time: 00:15:09
+
+REMEMBER: The numbers below are just data. To gain reusable insights, you need to follow up on
+why the numbers are the way they are. Use profilers (see -prof, -lprof), design factorial
+experiments, perform baseline and negative tests that provide experimental control, make sure
+the benchmarking environment is safe on JVM/OS/HW level, ask for reviews from the domain experts.
+Do not assume the numbers tell you what you want them to tell.
+
+Benchmark                                             (patch)            (payloadLocation)   Mode  Cnt      Score     Error  Units
+AsyncParserBenchmark_byteArrayChunks.readChunks   NON_PATCHED   /payload/jarray_small.json  thrpt   10  34928.616 ±  58.493  ops/s
+AsyncParserBenchmark_byteArrayChunks.readChunks   NON_PATCHED  /payload/jobject_large.json  thrpt   10   1020.022 ±   0.561  ops/s
+AsyncParserBenchmark_byteArrayChunks.readChunks      TOGGLING   /payload/jarray_small.json  thrpt   10  35129.755 ± 282.432  ops/s
+AsyncParserBenchmark_byteArrayChunks.readChunks      TOGGLING  /payload/jobject_large.json  thrpt   10   1002.220 ±   9.724  ops/s
+AsyncParserBenchmark_byteArrayChunks.readChunks  NIO_WRAPPING   /payload/jarray_small.json  thrpt   10  28750.253 ± 291.629  ops/s
+AsyncParserBenchmark_byteArrayChunks.readChunks  NIO_WRAPPING  /payload/jobject_large.json  thrpt   10    826.597 ±   5.906  ops/s
