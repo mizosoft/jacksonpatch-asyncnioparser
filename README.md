@@ -40,6 +40,5 @@ AsyncParserBenchmark_byteBufferChunks.readChunks      TOGGLING  /payload/jobject
 Benchmark                                 Mode  Cnt     Score    Error   Units
 BufferAccessorBenchmark.byteArray        thrpt    5  1673.493 ± 10.693  ops/us
 BufferAccessorBenchmark.directNioBuffer  thrpt    5  1208.890 ±  5.003  ops/us
-BufferAccessorBenchmark.nioBuffer        thrpt    5  1207.956 ±  7.147  ops
-/us
+BufferAccessorBenchmark.nioBuffer        thrpt    5  1207.956 ±  7.147  ops/us
 ```
