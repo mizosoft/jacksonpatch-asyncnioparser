@@ -27,8 +27,8 @@ import org.openjdk.jmh.infra.Blackhole;
 @State(Scope.Benchmark)
 @Fork(value = 1, warmups = 1)
 @Threads(Threads.MAX)
-@Warmup(iterations = 4, time = 5)
-@Measurement(iterations = 8, time = 5)
+@Warmup(iterations = 5, time = 5)
+@Measurement(iterations = 10, time = 5)
 @OutputTimeUnit(TimeUnit.SECONDS)
 @BenchmarkMode(Mode.Throughput)
 public class AbstractAsyncParserBenchmark {
