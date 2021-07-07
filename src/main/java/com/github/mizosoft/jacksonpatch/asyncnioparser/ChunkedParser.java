@@ -1,8 +1,8 @@
 package com.github.mizosoft.jacksonpatch.asyncnioparser;
 
+import com.fasterxml.jackson.core.json.async.NonBlockingJsonParserBase;
 import java.io.IOException;
 import java.io.OutputStream;
-import java.nio.ByteBuffer;
 
 import com.fasterxml.jackson.core.*;
 import com.fasterxml.jackson.core.async.ByteArrayFeeder;
@@ -12,8 +12,6 @@ import com.fasterxml.jackson.core.io.IOContext;
 import com.fasterxml.jackson.core.json.JsonReadFeature;
 import com.fasterxml.jackson.core.sym.ByteQuadsCanonicalizer;
 import com.fasterxml.jackson.core.util.VersionUtil;
-import com.fasterxml.jackson.core.json.async.NonBlockingJsonParserBase;
-import com.fasterxml.jackson.core.async.ByteBufferFeeder;
 
 /**
  * Non-blocking parser implementation for JSON content.
@@ -21,12 +19,20 @@ import com.fasterxml.jackson.core.async.ByteBufferFeeder;
  * NOTE: only supports parsing of UTF-8 encoded content (and 7-bit US-ASCII since
  * it is strict subset of UTF-8): other encodings are not supported.
  */
-public class NioWrappingNonBlockingJsonParser
+public class ChunkedParser
     extends NonBlockingJsonParserBase
-    implements ByteArrayFeeder, ByteBufferFeeder
+    implements ByteArrayFeeder
 {
-    private final static int FEAT_MASK_TRAILING_COMMA = JsonReadFeature.ALLOW_TRAILING_COMMA.getMask();
-    private final static int FEAT_MASK_ALLOW_MISSING = JsonReadFeature.ALLOW_MISSING_VALUES.getMask();
+    @SuppressWarnings("deprecation")
+    private final static int FEAT_MASK_TRAILING_COMMA = Feature.ALLOW_TRAILING_COMMA.getMask();
+    @SuppressWarnings("deprecation")
+    private final static int FEAT_MASK_LEADING_ZEROS = Feature.ALLOW_NUMERIC_LEADING_ZEROS.getMask();
+    @SuppressWarnings("deprecation")
+    private final static int FEAT_MASK_ALLOW_MISSING = Feature.ALLOW_MISSING_VALUES.getMask();
+    private final static int FEAT_MASK_ALLOW_SINGLE_QUOTES = Feature.ALLOW_SINGLE_QUOTES.getMask();
+    private final static int FEAT_MASK_ALLOW_UNQUOTED_NAMES = Feature.ALLOW_UNQUOTED_FIELD_NAMES.getMask();
+    private final static int FEAT_MASK_ALLOW_JAVA_COMMENTS = Feature.ALLOW_COMMENTS.getMask();
+    private final static int FEAT_MASK_ALLOW_YAML_COMMENTS = Feature.ALLOW_YAML_COMMENTS.getMask();
 
     // This is the main input-code lookup table, fetched eagerly
     private final static int[] _icUTF8 = CharTypes.getInputCodeUtf8();
@@ -44,7 +50,7 @@ public class NioWrappingNonBlockingJsonParser
     /**
      * This buffer is actually provided via {@link NonBlockingInputFeeder}
      */
-    protected ByteBuffer _inputBuffer = ByteBuffer.wrap(NO_BYTES);
+    protected byte[] _inputBuffer = NO_BYTES;
 
     /**
      * In addition to current buffer pointer, and end pointer,
@@ -64,10 +70,10 @@ public class NioWrappingNonBlockingJsonParser
     /**********************************************************************
      */
 
-    public NioWrappingNonBlockingJsonParser(ObjectReadContext readCtxt, IOContext ctxt,
-        int stdFeatures, int formatReadFeatures, ByteQuadsCanonicalizer sym)
+    public ChunkedParser(IOContext ctxt, int parserFeatures,
+            ByteQuadsCanonicalizer sym)
     {
-        super(readCtxt, ctxt, stdFeatures, formatReadFeatures, sym);
+        super(ctxt, parserFeatures, sym);
     }
 
     /*
@@ -89,13 +95,29 @@ public class NioWrappingNonBlockingJsonParser
     @Override
     public void feedInput(byte[] buf, int start, int end) throws IOException
     {
-        feedInput(buf, null, start, end);
-    }
+        // Must not have remaining input
+        if (_inputPtr < _inputEnd) {
+            _reportError("Still have %d undecoded bytes, should not call 'feedInput'", _inputEnd - _inputPtr);
+        }
+        if (end < start) {
+            _reportError("Input end (%d) may not be before start (%d)", end, start);
+        }
+        // and shouldn't have been marked as end-of-input
+        if (_endOfInput) {
+            _reportError("Already closed, can not feed more input");
+        }
+        // Time to update pointers first
+        _currInputProcessed += _origBufferLen;
 
-    @Override
-    public void feedInput(ByteBuffer nioBuf) throws IOException
-    {
-        feedInput(null, nioBuf, nioBuf.position(), nioBuf.limit());
+        // Also need to adjust row start, to work as if it extended into the past wrt new buffer
+        _currInputRowStart = start - (_inputEnd - _currInputRowStart);
+
+        // And then update buffer settings
+        _currBufferStart = start;
+        _inputBuffer = buf;
+        _inputPtr = start;
+        _inputEnd = end;
+        _origBufferLen = end - start;
     }
 
     @Override
@@ -124,14 +146,7 @@ public class NioWrappingNonBlockingJsonParser
     public int releaseBuffered(OutputStream out) throws IOException {
         int avail = _inputEnd - _inputPtr;
         if (avail > 0) {
-            byte[] released = new byte[avail];
-            int originalPtr = _inputPtr;
-            _inputPtr += avail;
-            _inputBuffer.mark();
-            _inputBuffer.position(originalPtr);
-            _inputBuffer.get(released);
-            _inputBuffer.reset();
-            out.write(released);
+            out.write(_inputBuffer, _inputPtr, avail);
         }
         return avail;
     }
@@ -180,39 +195,33 @@ public class NioWrappingNonBlockingJsonParser
         _tokenInputTotal = _currInputProcessed + _inputPtr;
         // also: clear any data retained so far
         _binaryValue = null;
-        int ch = _inputBuffer.get(_inputPtr++) & 0xFF;
+        int ch = _inputBuffer[_inputPtr++] & 0xFF;
 
         switch (_majorState) {
-            case MAJOR_INITIAL:
-                return _startDocument(ch);
+        case MAJOR_INITIAL:
+            return _startDocument(ch);
 
-            case MAJOR_ROOT:
-                return _startValue(ch);
+        case MAJOR_ROOT:
+            return _startValue(ch);
 
-            case MAJOR_OBJECT_FIELD_FIRST: // expect field-name or end-object
-                return _startFieldName(ch);
-            case MAJOR_OBJECT_FIELD_NEXT: // expect comma + field-name or end-object
-                return _startFieldNameAfterComma(ch);
+        case MAJOR_OBJECT_FIELD_FIRST: // expect field-name or end-object
+            return _startFieldName(ch);
+        case MAJOR_OBJECT_FIELD_NEXT: // expect comma + field-name or end-object
+            return _startFieldNameAfterComma(ch);
 
-            case MAJOR_OBJECT_VALUE: // expect colon, followed by value
-                return _startValueExpectColon(ch);
+        case MAJOR_OBJECT_VALUE: // expect colon, followed by value
+            return _startValueExpectColon(ch);
 
-            case MAJOR_ARRAY_ELEMENT_FIRST: // expect value or end-array
-                return _startValue(ch);
+        case MAJOR_ARRAY_ELEMENT_FIRST: // expect value or end-array
+            return _startValue(ch);
 
-            case MAJOR_ARRAY_ELEMENT_NEXT: // expect leading comma + value or end-array
-                return _startValueExpectComma(ch);
+        case MAJOR_ARRAY_ELEMENT_NEXT: // expect leading comma + value or end-array
+            return _startValueExpectComma(ch);
 
-            default:
+        default:
         }
         VersionUtil.throwInternal();
         return null;
-    }
-
-    @Override
-    public void finishToken() throws IOException {
-        // 10-Nov-2017, tatu: Can not implement reliably -- should this produce
-        //    exception or not? For now, quietly ignore
     }
 
     /**
@@ -224,85 +233,85 @@ public class NioWrappingNonBlockingJsonParser
     {
         // NOTE: caller ensures there's input available...
         switch (_minorState) {
-            case MINOR_ROOT_BOM:
-                return _finishBOM(_pending32);
-            case MINOR_FIELD_LEADING_WS:
-                return _startFieldName(_inputBuffer.get(_inputPtr++) & 0xFF);
-            case MINOR_FIELD_LEADING_COMMA:
-                return _startFieldNameAfterComma(_inputBuffer.get(_inputPtr++) & 0xFF);
+        case MINOR_ROOT_BOM:
+            return _finishBOM(_pending32);
+        case MINOR_FIELD_LEADING_WS:
+            return _startFieldName(_inputBuffer[_inputPtr++] & 0xFF);
+        case MINOR_FIELD_LEADING_COMMA:
+            return _startFieldNameAfterComma(_inputBuffer[_inputPtr++] & 0xFF);
 
-            // Field name states
-            case MINOR_FIELD_NAME:
-                return _parseEscapedName(_quadLength,  _pending32, _pendingBytes);
-            case MINOR_FIELD_NAME_ESCAPE:
-                return _finishFieldWithEscape();
-            case MINOR_FIELD_APOS_NAME:
-                return _finishAposName(_quadLength,  _pending32, _pendingBytes);
-            case MINOR_FIELD_UNQUOTED_NAME:
-                return _finishUnquotedName(_quadLength,  _pending32, _pendingBytes);
+        // Field name states
+        case MINOR_FIELD_NAME:
+            return _parseEscapedName(_quadLength,  _pending32, _pendingBytes);
+        case MINOR_FIELD_NAME_ESCAPE:
+            return _finishFieldWithEscape();
+        case MINOR_FIELD_APOS_NAME:
+            return _finishAposName(_quadLength,  _pending32, _pendingBytes);
+        case MINOR_FIELD_UNQUOTED_NAME:
+            return _finishUnquotedName(_quadLength,  _pending32, _pendingBytes);
 
-            // Value states
+        // Value states
 
-            case MINOR_VALUE_LEADING_WS:
-                return _startValue(_inputBuffer.get(_inputPtr++) & 0xFF);
-            case MINOR_VALUE_WS_AFTER_COMMA:
-                return _startValueAfterComma(_inputBuffer.get(_inputPtr++) & 0xFF);
-            case MINOR_VALUE_EXPECTING_COMMA:
-                return _startValueExpectComma(_inputBuffer.get(_inputPtr++) & 0xFF);
-            case MINOR_VALUE_EXPECTING_COLON:
-                return _startValueExpectColon(_inputBuffer.get(_inputPtr++) & 0xFF);
+        case MINOR_VALUE_LEADING_WS:
+            return _startValue(_inputBuffer[_inputPtr++] & 0xFF);
+        case MINOR_VALUE_WS_AFTER_COMMA:
+            return _startValueAfterComma(_inputBuffer[_inputPtr++] & 0xFF);
+        case MINOR_VALUE_EXPECTING_COMMA:
+            return _startValueExpectComma(_inputBuffer[_inputPtr++] & 0xFF);
+        case MINOR_VALUE_EXPECTING_COLON:
+            return _startValueExpectColon(_inputBuffer[_inputPtr++] & 0xFF);
 
-            case MINOR_VALUE_TOKEN_NULL:
-                return _finishKeywordToken("null", _pending32, JsonToken.VALUE_NULL);
-            case MINOR_VALUE_TOKEN_TRUE:
-                return _finishKeywordToken("true", _pending32, JsonToken.VALUE_TRUE);
-            case MINOR_VALUE_TOKEN_FALSE:
-                return _finishKeywordToken("false", _pending32, JsonToken.VALUE_FALSE);
-            case MINOR_VALUE_TOKEN_NON_STD:
-                return _finishNonStdToken(_nonStdTokenType, _pending32);
+        case MINOR_VALUE_TOKEN_NULL:
+            return _finishKeywordToken("null", _pending32, JsonToken.VALUE_NULL);
+        case MINOR_VALUE_TOKEN_TRUE:
+            return _finishKeywordToken("true", _pending32, JsonToken.VALUE_TRUE);
+        case MINOR_VALUE_TOKEN_FALSE:
+            return _finishKeywordToken("false", _pending32, JsonToken.VALUE_FALSE);
+        case MINOR_VALUE_TOKEN_NON_STD:
+            return _finishNonStdToken(_nonStdTokenType, _pending32);
 
-            case MINOR_NUMBER_MINUS:
-                return _finishNumberMinus(_inputBuffer.get(_inputPtr++) & 0xFF);
-            case MINOR_NUMBER_ZERO:
-                return _finishNumberLeadingZeroes();
-            case MINOR_NUMBER_MINUSZERO:
-                return _finishNumberLeadingNegZeroes();
-            case MINOR_NUMBER_INTEGER_DIGITS:
-                return _finishNumberIntegralPart(_textBuffer.getBufferWithoutReset(),
+        case MINOR_NUMBER_MINUS:
+            return _finishNumberMinus(_inputBuffer[_inputPtr++] & 0xFF);
+        case MINOR_NUMBER_ZERO:
+            return _finishNumberLeadingZeroes();
+        case MINOR_NUMBER_MINUSZERO:
+            return _finishNumberLeadingNegZeroes();
+        case MINOR_NUMBER_INTEGER_DIGITS:
+            return _finishNumberIntegralPart(_textBuffer.getBufferWithoutReset(),
                     _textBuffer.getCurrentSegmentSize());
-            case MINOR_NUMBER_FRACTION_DIGITS:
-                return _finishFloatFraction();
-            case MINOR_NUMBER_EXPONENT_MARKER:
-                return _finishFloatExponent(true, _inputBuffer.get(_inputPtr++) & 0xFF);
-            case MINOR_NUMBER_EXPONENT_DIGITS:
-                return _finishFloatExponent(false, _inputBuffer.get(_inputPtr++) & 0xFF);
+        case MINOR_NUMBER_FRACTION_DIGITS:
+            return _finishFloatFraction();
+        case MINOR_NUMBER_EXPONENT_MARKER:
+            return _finishFloatExponent(true, _inputBuffer[_inputPtr++] & 0xFF);
+        case MINOR_NUMBER_EXPONENT_DIGITS:
+            return _finishFloatExponent(false, _inputBuffer[_inputPtr++] & 0xFF);
 
-            case MINOR_VALUE_STRING:
-                return _finishRegularString();
-            case MINOR_VALUE_STRING_UTF8_2:
-                _textBuffer.append((char) _decodeUTF8_2(_pending32, _inputBuffer.get(_inputPtr++)));
-                if (_minorStateAfterSplit == MINOR_VALUE_APOS_STRING) {
-                    return _finishAposString();
-                }
-                return _finishRegularString();
-            case MINOR_VALUE_STRING_UTF8_3:
-                if (!_decodeSplitUTF8_3(_pending32, _pendingBytes, _inputBuffer.get(_inputPtr++))) {
-                    return JsonToken.NOT_AVAILABLE;
-                }
-                if (_minorStateAfterSplit == MINOR_VALUE_APOS_STRING) {
-                    return _finishAposString();
-                }
-                return _finishRegularString();
-            case MINOR_VALUE_STRING_UTF8_4:
-                if (!_decodeSplitUTF8_4(_pending32, _pendingBytes, _inputBuffer.get(_inputPtr++))) {
-                    return JsonToken.NOT_AVAILABLE;
-                }
-                if (_minorStateAfterSplit == MINOR_VALUE_APOS_STRING) {
-                    return _finishAposString();
-                }
-                return _finishRegularString();
+        case MINOR_VALUE_STRING:
+            return _finishRegularString();
+        case MINOR_VALUE_STRING_UTF8_2:
+            _textBuffer.append((char) _decodeUTF8_2(_pending32, _inputBuffer[_inputPtr++]));
+            if (_minorStateAfterSplit == MINOR_VALUE_APOS_STRING) {
+                return _finishAposString();
+            }
+            return _finishRegularString();
+        case MINOR_VALUE_STRING_UTF8_3:
+            if (!_decodeSplitUTF8_3(_pending32, _pendingBytes, _inputBuffer[_inputPtr++])) {
+                return JsonToken.NOT_AVAILABLE;
+            }
+            if (_minorStateAfterSplit == MINOR_VALUE_APOS_STRING) {
+                return _finishAposString();
+            }
+            return _finishRegularString();
+        case MINOR_VALUE_STRING_UTF8_4:
+            if (!_decodeSplitUTF8_4(_pending32, _pendingBytes, _inputBuffer[_inputPtr++])) {
+                return JsonToken.NOT_AVAILABLE;
+            }
+            if (_minorStateAfterSplit == MINOR_VALUE_APOS_STRING) {
+                return _finishAposString();
+            }
+            return _finishRegularString();
 
-            case MINOR_VALUE_STRING_ESCAPE:
+        case MINOR_VALUE_STRING_ESCAPE:
             {
                 int c = _decodeSplitEscaped(_quoted32, _quotedDigits);
                 if (c < 0) {
@@ -315,24 +324,24 @@ public class NioWrappingNonBlockingJsonParser
             }
             return _finishRegularString();
 
-            case MINOR_VALUE_APOS_STRING:
-                return _finishAposString();
+        case MINOR_VALUE_APOS_STRING:
+            return _finishAposString();
 
-            case MINOR_VALUE_TOKEN_ERROR: // case of "almost token", just need tokenize for error
-                return _finishErrorToken();
+        case MINOR_VALUE_TOKEN_ERROR: // case of "almost token", just need tokenize for error
+            return _finishErrorToken();
 
-            // Comments
+        // Comments
 
-            case MINOR_COMMENT_LEADING_SLASH:
-                return _startSlashComment(_pending32);
-            case MINOR_COMMENT_CLOSING_ASTERISK:
-                return _finishCComment(_pending32, true);
-            case MINOR_COMMENT_C:
-                return _finishCComment(_pending32, false);
-            case MINOR_COMMENT_CPP:
-                return _finishCppComment(_pending32);
-            case MINOR_COMMENT_YAML:
-                return _finishHashComment(_pending32);
+        case MINOR_COMMENT_LEADING_SLASH:
+            return _startSlashComment(_pending32);
+        case MINOR_COMMENT_CLOSING_ASTERISK:
+            return _finishCComment(_pending32, true);
+        case MINOR_COMMENT_C:
+            return _finishCComment(_pending32, false);
+        case MINOR_COMMENT_CPP:
+            return _finishCppComment(_pending32);
+        case MINOR_COMMENT_YAML:
+            return _finishHashComment(_pending32);
         }
         VersionUtil.throwInternal();
         return null;
@@ -349,31 +358,31 @@ public class NioWrappingNonBlockingJsonParser
         // NOTE: caller ensures there's input available...
         JsonToken t = _currToken;
         switch (_minorState) {
-            case MINOR_ROOT_GOT_SEPARATOR: // fine, just skip some trailing space
-                return _eofAsNextToken();
-            case MINOR_VALUE_LEADING_WS: // finished at token boundary; probably fine
-                return _eofAsNextToken();
+        case MINOR_ROOT_GOT_SEPARATOR: // fine, just skip some trailing space
+            return _eofAsNextToken();
+        case MINOR_VALUE_LEADING_WS: // finished at token boundary; probably fine
+            return _eofAsNextToken();
 //        case MINOR_VALUE_EXPECTING_COMMA: // not fine
 //        case MINOR_VALUE_EXPECTING_COLON: // not fine
-            case MINOR_VALUE_TOKEN_NULL:
-                return _finishKeywordTokenWithEOF("null", _pending32, JsonToken.VALUE_NULL);
-            case MINOR_VALUE_TOKEN_TRUE:
-                return _finishKeywordTokenWithEOF("true", _pending32, JsonToken.VALUE_TRUE);
-            case MINOR_VALUE_TOKEN_FALSE:
-                return _finishKeywordTokenWithEOF("false", _pending32, JsonToken.VALUE_FALSE);
-            case MINOR_VALUE_TOKEN_NON_STD:
-                return _finishNonStdTokenWithEOF(_nonStdTokenType, _pending32);
-            case MINOR_VALUE_TOKEN_ERROR: // case of "almost token", just need tokenize for error
-                return _finishErrorTokenWithEOF();
+        case MINOR_VALUE_TOKEN_NULL:
+            return _finishKeywordTokenWithEOF("null", _pending32, JsonToken.VALUE_NULL);
+        case MINOR_VALUE_TOKEN_TRUE:
+            return _finishKeywordTokenWithEOF("true", _pending32, JsonToken.VALUE_TRUE);
+        case MINOR_VALUE_TOKEN_FALSE:
+            return _finishKeywordTokenWithEOF("false", _pending32, JsonToken.VALUE_FALSE);
+        case MINOR_VALUE_TOKEN_NON_STD:
+            return _finishNonStdTokenWithEOF(_nonStdTokenType, _pending32);
+        case MINOR_VALUE_TOKEN_ERROR: // case of "almost token", just need tokenize for error
+            return _finishErrorTokenWithEOF();
 
-            // Number-parsing states; valid stopping points, more explicit errors
-            case MINOR_NUMBER_ZERO:
-            case MINOR_NUMBER_MINUSZERO:
-                // NOTE: does NOT retain possible leading minus-sign (can change if
-                // absolutely needs be)
-                return _valueCompleteInt(0, "0");
-            case MINOR_NUMBER_INTEGER_DIGITS:
-                // Fine: just need to ensure we have value fully defined
+        // Number-parsing states; valid stopping points, more explicit errors
+        case MINOR_NUMBER_ZERO:
+        case MINOR_NUMBER_MINUSZERO:
+            // NOTE: does NOT retain possible leading minus-sign (can change if
+            // absolutely needs be)
+            return _valueCompleteInt(0, "0");
+        case MINOR_NUMBER_INTEGER_DIGITS:
+            // Fine: just need to ensure we have value fully defined
             {
                 int len = _textBuffer.getCurrentSegmentSize();
                 if (_numberNegative) {
@@ -383,29 +392,29 @@ public class NioWrappingNonBlockingJsonParser
             }
             return _valueComplete(JsonToken.VALUE_NUMBER_INT);
 
-            case MINOR_NUMBER_FRACTION_DIGITS:
-                _expLength = 0;
-                // fall through
-            case MINOR_NUMBER_EXPONENT_DIGITS:
-                return _valueComplete(JsonToken.VALUE_NUMBER_FLOAT);
+        case MINOR_NUMBER_FRACTION_DIGITS:
+            _expLength = 0;
+            // fall through
+        case MINOR_NUMBER_EXPONENT_DIGITS:
+            return _valueComplete(JsonToken.VALUE_NUMBER_FLOAT);
 
-            case MINOR_NUMBER_EXPONENT_MARKER:
-                _reportInvalidEOF(": was expecting fraction after exponent marker", JsonToken.VALUE_NUMBER_FLOAT);
+        case MINOR_NUMBER_EXPONENT_MARKER:
+            _reportInvalidEOF(": was expecting fraction after exponent marker", JsonToken.VALUE_NUMBER_FLOAT);
 
-                // How about comments?
-                // Inside C-comments; not legal
+            // How about comments?
+            // Inside C-comments; not legal
 
 //        case MINOR_COMMENT_LEADING_SLASH: // not legal, but use default error
-            case MINOR_COMMENT_CLOSING_ASTERISK:
-            case MINOR_COMMENT_C:
-                _reportInvalidEOF(": was expecting closing '*/' for comment", JsonToken.NOT_AVAILABLE);
+        case MINOR_COMMENT_CLOSING_ASTERISK:
+        case MINOR_COMMENT_C:
+            _reportInvalidEOF(": was expecting closing '*/' for comment", JsonToken.NOT_AVAILABLE);
 
-            case MINOR_COMMENT_CPP:
-            case MINOR_COMMENT_YAML:
-                // within C++/YAML comments, ok, as long as major state agrees...
-                return _eofAsNextToken();
+        case MINOR_COMMENT_CPP:
+        case MINOR_COMMENT_YAML:
+            // within C++/YAML comments, ok, as long as major state agrees...
+            return _eofAsNextToken();
 
-            default:
+        default:
         }
         _reportInvalidEOF(": was expecting rest of token (internal state: "+_minorState+")", _currToken);
         return t; // never gets here
@@ -450,7 +459,7 @@ public class NioWrappingNonBlockingJsonParser
                 }
                 return JsonToken.NOT_AVAILABLE;
             }
-            ch = _inputBuffer.get(_inputPtr++) & 0xFF;
+            ch = _inputBuffer[_inputPtr++] & 0xFF;
         }
         return _startValue(ch);
     }
@@ -462,23 +471,23 @@ public class NioWrappingNonBlockingJsonParser
         // public final static byte UTF8_BOM_3 = (byte) 0xBF;
 
         while (_inputPtr < _inputEnd) {
-            int ch = _inputBuffer.get(_inputPtr++) & 0xFF;
+            int ch = _inputBuffer[_inputPtr++] & 0xFF;
             switch (bytesHandled) {
-                case 3:
-                    // got it all; go back to "start document" handling, without changing
-                    // minor state (to let it know we've done BOM)
-                    _currInputProcessed -= 3;
-                    return _startDocument(ch);
-                case 2:
-                    if (ch != 0xBF) {
-                        _reportError("Unexpected byte 0x%02x following 0xEF 0xBB; should get 0xBF as third byte of UTF-8 BOM", ch);
-                    }
-                    break;
-                case 1:
-                    if (ch != 0xBB) {
-                        _reportError("Unexpected byte 0x%02x following 0xEF; should get 0xBB as second byte UTF-8 BOM", ch);
-                    }
-                    break;
+            case 3:
+                // got it all; go back to "start document" handling, without changing
+                // minor state (to let it know we've done BOM)
+                _currInputProcessed -= 3;
+                return _startDocument(ch);
+            case 2:
+                if (ch != 0xBF) {
+                    _reportError("Unexpected byte 0x%02x following 0xEF 0xBB; should get 0xBF as third byte of UTF-8 BOM", ch);
+                }
+                break;
+            case 1:
+                if (ch != 0xBB) {
+                    _reportError("Unexpected byte 0x%02x following 0xEF; should get 0xBB as second byte UTF-8 BOM", ch);
+                }
+                break;
             }
             ++bytesHandled;
         }
@@ -551,7 +560,7 @@ public class NioWrappingNonBlockingJsonParser
             _minorState = MINOR_FIELD_LEADING_WS;
             return (_currToken = JsonToken.NOT_AVAILABLE);
         }
-        ch = _inputBuffer.get(ptr);
+        ch = _inputBuffer[ptr];
         _inputPtr = ptr+1;
         if (ch <= 0x0020) {
             ch = _skipWS(ch);
@@ -563,7 +572,7 @@ public class NioWrappingNonBlockingJsonParser
         _updateTokenLocation();
         if (ch != INT_QUOTE) {
             if (ch == INT_RCURLY) {
-                if ((_formatReadFeatures & FEAT_MASK_TRAILING_COMMA) != 0) {
+                if ((_features & FEAT_MASK_TRAILING_COMMA) != 0) {
                     return _closeObjectScope();
                 }
             }
@@ -608,43 +617,50 @@ public class NioWrappingNonBlockingJsonParser
             return _startString();
         }
         switch (ch) {
-            case '#':
-                return _finishHashComment(MINOR_VALUE_LEADING_WS);
-            case '-':
-                return _startNegativeNumber();
-            case '/': // c/c++ comments
-                return _startSlashComment(MINOR_VALUE_LEADING_WS);
+        case '#':
+            return _finishHashComment(MINOR_VALUE_LEADING_WS);
+        case '-':
+            return _startNegativeNumber();
+        case '/': // c/c++ comments
+            return _startSlashComment(MINOR_VALUE_LEADING_WS);
 
-            // Should we have separate handling for plus? Although
-            // it is not allowed per se, it may be erroneously used,
-            // and could be indicate by a more specific error message.
-            case '0':
-                return _startNumberLeadingZero();
-            case '1':
-            case '2':
-            case '3':
-            case '4':
-            case '5':
-            case '6':
-            case '7':
-            case '8':
-            case '9':
-                return _startPositiveNumber(ch);
-            case 'f':
-                return _startFalseToken();
-            case 'n':
-                return _startNullToken();
-            case 't':
-                return _startTrueToken();
-            case '[':
-                return _startArrayScope();
-            case INT_RBRACKET:
-                return _closeArrayScope();
-            case '{':
-                return _startObjectScope();
-            case INT_RCURLY:
-                return _closeObjectScope();
-            default:
+        // Should we have separate handling for plus? Although
+        // it is not allowed per se, it may be erroneously used,
+        // and could be indicate by a more specific error message.
+
+        case '.': // [core#611]
+            if (isEnabled(JsonReadFeature.ALLOW_LEADING_DECIMAL_POINT_FOR_NUMBERS.mappedFeature())) {
+                return _startFloatThatStartsWithPeriod();
+            }
+            break;
+
+        case '0':
+            return _startNumberLeadingZero();
+        case '1':
+        case '2':
+        case '3':
+        case '4':
+        case '5':
+        case '6':
+        case '7':
+        case '8':
+        case '9':
+            return _startPositiveNumber(ch);
+        case 'f':
+            return _startFalseToken();
+        case 'n':
+            return _startNullToken();
+        case 't':
+            return _startTrueToken();
+        case '[':
+            return _startArrayScope();
+        case INT_RBRACKET:
+            return _closeArrayScope();
+        case '{':
+            return _startObjectScope();
+        case INT_RCURLY:
+            return _closeObjectScope();
+        default:
         }
         return _startUnexpectedValue(false, ch);
     }
@@ -687,7 +703,7 @@ public class NioWrappingNonBlockingJsonParser
             _minorState = MINOR_VALUE_WS_AFTER_COMMA;
             return (_currToken = JsonToken.NOT_AVAILABLE);
         }
-        ch = _inputBuffer.get(ptr);
+        ch = _inputBuffer[ptr];
         _inputPtr = ptr+1;
         if (ch <= 0x0020) {
             ch = _skipWS(ch);
@@ -701,48 +717,48 @@ public class NioWrappingNonBlockingJsonParser
             return _startString();
         }
         switch (ch) {
-            case '#':
-                return _finishHashComment(MINOR_VALUE_WS_AFTER_COMMA);
-            case '-':
-                return _startNegativeNumber();
-            case '/':
-                return _startSlashComment(MINOR_VALUE_WS_AFTER_COMMA);
+        case '#':
+            return _finishHashComment(MINOR_VALUE_WS_AFTER_COMMA);
+        case '-':
+            return _startNegativeNumber();
+        case '/':
+            return _startSlashComment(MINOR_VALUE_WS_AFTER_COMMA);
 
-            // Should we have separate handling for plus? Although
-            // it is not allowed per se, it may be erroneously used,
-            // and could be indicate by a more specific error message.
-            case '0':
-                return _startNumberLeadingZero();
+        // Should we have separate handling for plus? Although
+        // it is not allowed per se, it may be erroneously used,
+        // and could be indicate by a more specific error message.
+        case '0':
+            return _startNumberLeadingZero();
 
-            case '1':
-            case '2': case '3':
-            case '4': case '5':
-            case '6': case '7':
-            case '8': case '9':
-                return _startPositiveNumber(ch);
-            case 'f':
-                return _startFalseToken();
-            case 'n':
-                return _startNullToken();
-            case 't':
-                return _startTrueToken();
-            case '[':
-                return _startArrayScope();
-            case INT_RBRACKET:
-                // Was that a trailing comma?
-                if ((_formatReadFeatures & FEAT_MASK_TRAILING_COMMA) != 0) {
-                    return _closeArrayScope();
-                }
-                break;
-            case '{':
-                return _startObjectScope();
-            case INT_RCURLY:
-                // Was that a trailing comma?
-                if ((_formatReadFeatures & FEAT_MASK_TRAILING_COMMA) != 0) {
-                    return _closeObjectScope();
-                }
-                break;
-            default:
+        case '1':
+        case '2': case '3':
+        case '4': case '5':
+        case '6': case '7':
+        case '8': case '9':
+            return _startPositiveNumber(ch);
+        case 'f':
+            return _startFalseToken();
+        case 'n':
+            return _startNullToken();
+        case 't':
+            return _startTrueToken();
+        case '[':
+            return _startArrayScope();
+        case INT_RBRACKET:
+            // Was that a trailing comma?
+            if ((_features & FEAT_MASK_TRAILING_COMMA) != 0) {
+                return _closeArrayScope();
+            }
+            break;
+        case '{':
+            return _startObjectScope();
+        case INT_RCURLY:
+            // Was that a trailing comma?
+            if ((_features & FEAT_MASK_TRAILING_COMMA) != 0) {
+                return _closeObjectScope();
+            }
+            break;
+        default:
         }
         return _startUnexpectedValue(true, ch);
     }
@@ -777,7 +793,7 @@ public class NioWrappingNonBlockingJsonParser
             _minorState = MINOR_VALUE_LEADING_WS;
             return (_currToken = JsonToken.NOT_AVAILABLE);
         }
-        ch = _inputBuffer.get(ptr);
+        ch = _inputBuffer[ptr];
         _inputPtr = ptr+1;
         if (ch <= 0x0020) {
             ch = _skipWS(ch); // will skip through all available ws (and comments)
@@ -791,36 +807,36 @@ public class NioWrappingNonBlockingJsonParser
             return _startString();
         }
         switch (ch) {
-            case '#':
-                return _finishHashComment(MINOR_VALUE_LEADING_WS);
-            case '-':
-                return _startNegativeNumber();
-            case '/':
-                return _startSlashComment(MINOR_VALUE_LEADING_WS);
+        case '#':
+            return _finishHashComment(MINOR_VALUE_LEADING_WS);
+        case '-':
+            return _startNegativeNumber();
+        case '/':
+            return _startSlashComment(MINOR_VALUE_LEADING_WS);
 
-            // Should we have separate handling for plus? Although
-            // it is not allowed per se, it may be erroneously used,
-            // and could be indicate by a more specific error message.
-            case '0':
-                return _startNumberLeadingZero();
+        // Should we have separate handling for plus? Although
+        // it is not allowed per se, it may be erroneously used,
+        // and could be indicate by a more specific error message.
+        case '0':
+            return _startNumberLeadingZero();
 
-            case '1':
-            case '2': case '3':
-            case '4': case '5':
-            case '6': case '7':
-            case '8': case '9':
-                return _startPositiveNumber(ch);
-            case 'f':
-                return _startFalseToken();
-            case 'n':
-                return _startNullToken();
-            case 't':
-                return _startTrueToken();
-            case '[':
-                return _startArrayScope();
-            case '{':
-                return _startObjectScope();
-            default:
+        case '1':
+        case '2': case '3':
+        case '4': case '5':
+        case '6': case '7':
+        case '8': case '9':
+            return _startPositiveNumber(ch);
+        case 'f':
+            return _startFalseToken();
+        case 'n':
+            return _startNullToken();
+        case 't':
+            return _startTrueToken();
+        case '[':
+            return _startArrayScope();
+        case '{':
+            return _startObjectScope();
+        default:
         }
         return _startUnexpectedValue(false, ch);
     }
@@ -842,51 +858,51 @@ public class NioWrappingNonBlockingJsonParser
             return _startString();
         }
         switch (ch) {
-            case '#':
-                return _finishHashComment(MINOR_VALUE_WS_AFTER_COMMA);
-            case '-':
-                return _startNegativeNumber();
-            case '/':
-                return _startSlashComment(MINOR_VALUE_WS_AFTER_COMMA);
+        case '#':
+            return _finishHashComment(MINOR_VALUE_WS_AFTER_COMMA);
+        case '-':
+            return _startNegativeNumber();
+        case '/':
+            return _startSlashComment(MINOR_VALUE_WS_AFTER_COMMA);
 
-            // Should we have separate handling for plus? Although
-            // it is not allowed per se, it may be erroneously used,
-            // and could be indicate by a more specific error message.
-            case '0':
-                return _startNumberLeadingZero();
-            case '1':
-            case '2':
-            case '3':
-            case '4':
-            case '5':
-            case '6':
-            case '7':
-            case '8':
-            case '9':
-                return _startPositiveNumber(ch);
-            case 'f':
-                return _startFalseToken();
-            case 'n':
-                return _startNullToken();
-            case 't':
-                return _startTrueToken();
-            case '[':
-                return _startArrayScope();
-            case INT_RBRACKET:
-                // Was that a trailing comma?
-                if ((_formatReadFeatures & FEAT_MASK_TRAILING_COMMA) != 0) {
-                    return _closeArrayScope();
-                }
-                break;
-            case '{':
-                return _startObjectScope();
-            case INT_RCURLY:
-                // Was that a trailing comma?
-                if ((_formatReadFeatures & FEAT_MASK_TRAILING_COMMA) != 0) {
-                    return _closeObjectScope();
-                }
-                break;
-            default:
+        // Should we have separate handling for plus? Although
+        // it is not allowed per se, it may be erroneously used,
+        // and could be indicate by a more specific error message.
+        case '0':
+            return _startNumberLeadingZero();
+        case '1':
+        case '2':
+        case '3':
+        case '4':
+        case '5':
+        case '6':
+        case '7':
+        case '8':
+        case '9':
+            return _startPositiveNumber(ch);
+        case 'f':
+            return _startFalseToken();
+        case 'n':
+            return _startNullToken();
+        case 't':
+            return _startTrueToken();
+        case '[':
+            return _startArrayScope();
+        case INT_RBRACKET:
+            // Was that a trailing comma?
+            if ((_features & FEAT_MASK_TRAILING_COMMA) != 0) {
+                return _closeArrayScope();
+            }
+            break;
+        case '{':
+            return _startObjectScope();
+        case INT_RCURLY:
+            // Was that a trailing comma?
+            if ((_features & FEAT_MASK_TRAILING_COMMA) != 0) {
+                return _closeObjectScope();
+            }
+            break;
+        default:
         }
         return _startUnexpectedValue(true, ch);
     }
@@ -894,35 +910,38 @@ public class NioWrappingNonBlockingJsonParser
     protected JsonToken _startUnexpectedValue(boolean leadingComma, int ch) throws IOException
     {
         switch (ch) {
-            case INT_RBRACKET:
-                if (!_parsingContext.inArray()) {
-                    break;
-                }
-                // fall through
-            case ',':
-                // 28-Mar-2016: [core#116]: If Feature.ALLOW_MISSING_VALUES is enabled
-                //   we may allow "missing values", that is, encountering a trailing
-                //   comma or closing marker where value would be expected
-                if ((_formatReadFeatures & FEAT_MASK_ALLOW_MISSING) != 0) {
+        case INT_RBRACKET:
+            if (!_parsingContext.inArray()) {
+                break;
+            }
+            // fall through
+        case ',':
+            // 28-Mar-2016: [core#116]: If Feature.ALLOW_MISSING_VALUES is enabled
+            //   we may allow "missing values", that is, encountering a trailing
+            //   comma or closing marker where value would be expected
+            // 11-May-2020, tatu: [core#616] No commas in root level
+            if (!_parsingContext.inRoot()) {
+                if ((_features & FEAT_MASK_ALLOW_MISSING) != 0) {
                     --_inputPtr;
                     return _valueComplete(JsonToken.VALUE_NULL);
                 }
-                // fall through
-            case INT_RCURLY:
-                // Error: neither is valid at this point; valid closers have
-                // been handled earlier
-                break;
-            case '\'':
-                if (isEnabled(JsonReadFeature.ALLOW_SINGLE_QUOTES)) {
-                    return _startAposString();
-                }
-                break;
-            case '+':
-                return _finishNonStdToken(NON_STD_TOKEN_PLUS_INFINITY, 1);
-            case 'N':
-                return _finishNonStdToken(NON_STD_TOKEN_NAN, 1);
-            case 'I':
-                return _finishNonStdToken(NON_STD_TOKEN_INFINITY, 1);
+            }
+            // fall through
+        case INT_RCURLY:
+            // Error: neither is valid at this point; valid closers have
+            // been handled earlier
+            break;
+        case '\'':
+            if ((_features & FEAT_MASK_ALLOW_SINGLE_QUOTES) != 0) {
+                return _startAposString();
+            }
+            break;
+        case '+':
+            return _finishNonStdToken(NON_STD_TOKEN_PLUS_INFINITY, 1);
+        case 'N':
+            return _finishNonStdToken(NON_STD_TOKEN_NAN, 1);
+        case 'I':
+            return _finishNonStdToken(NON_STD_TOKEN_INFINITY, 1);
         }
         // !!! TODO: maybe try to collect more information for better diagnostics
         _reportUnexpectedChar(ch, "expected a valid value "+_validJsonValueList());
@@ -953,14 +972,14 @@ public class NioWrappingNonBlockingJsonParser
                 _currToken = JsonToken.NOT_AVAILABLE;
                 return 0;
             }
-            ch = _inputBuffer.get(_inputPtr++) & 0xFF;
+            ch = _inputBuffer[_inputPtr++] & 0xFF;
         } while (ch <= 0x0020);
         return ch;
     }
 
     private final JsonToken _startSlashComment(int fromMinorState) throws IOException
     {
-        if (!isEnabled(JsonReadFeature.ALLOW_JAVA_COMMENTS)) {
+        if ((_features & FEAT_MASK_ALLOW_JAVA_COMMENTS) == 0) {
             _reportUnexpectedChar('/', "maybe a (non-standard) comment? (not recognized as one since Feature 'ALLOW_COMMENTS' not enabled for parser)");
         }
 
@@ -970,7 +989,7 @@ public class NioWrappingNonBlockingJsonParser
             _minorState = MINOR_COMMENT_LEADING_SLASH;
             return (_currToken = JsonToken.NOT_AVAILABLE);
         }
-        int ch = _inputBuffer.get(_inputPtr++);
+        int ch = _inputBuffer[_inputPtr++];
         if (ch == INT_ASTERISK) { // c-style
             return _finishCComment(fromMinorState, false);
         }
@@ -984,7 +1003,7 @@ public class NioWrappingNonBlockingJsonParser
     private final JsonToken _finishHashComment(int fromMinorState) throws IOException
     {
         // Could by-pass this check by refactoring, but for now simplest way...
-        if (!isEnabled(JsonReadFeature.ALLOW_YAML_COMMENTS)) {
+        if ((_features & FEAT_MASK_ALLOW_YAML_COMMENTS) == 0) {
             _reportUnexpectedChar('#', "maybe a (non-standard) comment? (not recognized as one since Feature 'ALLOW_YAML_COMMENTS' not enabled for parser)");
         }
         while (true) {
@@ -993,7 +1012,7 @@ public class NioWrappingNonBlockingJsonParser
                 _pending32 = fromMinorState;
                 return (_currToken = JsonToken.NOT_AVAILABLE);
             }
-            int ch = _inputBuffer.get(_inputPtr++) & 0xFF;
+            int ch = _inputBuffer[_inputPtr++] & 0xFF;
             if (ch < 0x020) {
                 if (ch == INT_LF) {
                     ++_currInputRow;
@@ -1019,7 +1038,7 @@ public class NioWrappingNonBlockingJsonParser
                 _pending32 = fromMinorState;
                 return (_currToken = JsonToken.NOT_AVAILABLE);
             }
-            int ch = _inputBuffer.get(_inputPtr++) & 0xFF;
+            int ch = _inputBuffer[_inputPtr++] & 0xFF;
             if (ch < 0x020) {
                 if (ch == INT_LF) {
                     ++_currInputRow;
@@ -1045,7 +1064,7 @@ public class NioWrappingNonBlockingJsonParser
                 _pending32 = fromMinorState;
                 return (_currToken = JsonToken.NOT_AVAILABLE);
             }
-            int ch = _inputBuffer.get(_inputPtr++) & 0xFF;
+            int ch = _inputBuffer[_inputPtr++] & 0xFF;
             if (ch < 0x020) {
                 if (ch == INT_LF) {
                     ++_currInputRow;
@@ -1076,21 +1095,21 @@ public class NioWrappingNonBlockingJsonParser
             _minorState = fromMinorState;
             return (_currToken = JsonToken.NOT_AVAILABLE);
         }
-        int ch = _inputBuffer.get(_inputPtr++) & 0xFF;
+        int ch = _inputBuffer[_inputPtr++] & 0xFF;
         switch (fromMinorState) {
-            case MINOR_FIELD_LEADING_WS:
-                return _startFieldName(ch);
-            case MINOR_FIELD_LEADING_COMMA:
-                return _startFieldNameAfterComma(ch);
-            case MINOR_VALUE_LEADING_WS:
-                return _startValue(ch);
-            case MINOR_VALUE_EXPECTING_COMMA:
-                return _startValueExpectComma(ch);
-            case MINOR_VALUE_EXPECTING_COLON:
-                return _startValueExpectColon(ch);
-            case MINOR_VALUE_WS_AFTER_COMMA:
-                return _startValueAfterComma(ch);
-            default:
+        case MINOR_FIELD_LEADING_WS:
+            return _startFieldName(ch);
+        case MINOR_FIELD_LEADING_COMMA:
+            return _startFieldNameAfterComma(ch);
+        case MINOR_VALUE_LEADING_WS:
+            return _startValue(ch);
+        case MINOR_VALUE_EXPECTING_COMMA:
+            return _startValueExpectComma(ch);
+        case MINOR_VALUE_EXPECTING_COLON:
+            return _startValueExpectColon(ch);
+        case MINOR_VALUE_WS_AFTER_COMMA:
+            return _startValueAfterComma(ch);
+        default:
         }
         VersionUtil.throwInternal();
         return null;
@@ -1106,12 +1125,12 @@ public class NioWrappingNonBlockingJsonParser
     {
         int ptr = _inputPtr;
         if ((ptr + 4) < _inputEnd) { // yes, can determine efficiently
-            ByteBuffer buf = _inputBuffer;
-            if ((buf.get(ptr++) == 'a')
-                && (buf.get(ptr++) == 'l')
-                && (buf.get(ptr++) == 's')
-                && (buf.get(ptr++) == 'e')) {
-                int ch = buf.get(ptr) & 0xFF;
+            byte[] buf = _inputBuffer;
+            if ((buf[ptr++] == 'a')
+                   && (buf[ptr++] == 'l')
+                   && (buf[ptr++] == 's')
+                   && (buf[ptr++] == 'e')) {
+                int ch = buf[ptr] & 0xFF;
                 if (ch < INT_0 || (ch == INT_RBRACKET) || (ch == INT_RCURLY)) { // expected/allowed chars
                     _inputPtr = ptr;
                     return _valueComplete(JsonToken.VALUE_FALSE);
@@ -1126,11 +1145,11 @@ public class NioWrappingNonBlockingJsonParser
     {
         int ptr = _inputPtr;
         if ((ptr + 3) < _inputEnd) { // yes, can determine efficiently
-            ByteBuffer buf = _inputBuffer;
-            if ((buf.get(ptr++) == 'r')
-                && (buf.get(ptr++) == 'u')
-                && (buf.get(ptr++) == 'e')) {
-                int ch = buf.get(ptr) & 0xFF;
+            byte[] buf = _inputBuffer;
+            if ((buf[ptr++] == 'r')
+                   && (buf[ptr++] == 'u')
+                   && (buf[ptr++] == 'e')) {
+                int ch = buf[ptr] & 0xFF;
                 if (ch < INT_0 || (ch == INT_RBRACKET) || (ch == INT_RCURLY)) { // expected/allowed chars
                     _inputPtr = ptr;
                     return _valueComplete(JsonToken.VALUE_TRUE);
@@ -1145,11 +1164,11 @@ public class NioWrappingNonBlockingJsonParser
     {
         int ptr = _inputPtr;
         if ((ptr + 3) < _inputEnd) { // yes, can determine efficiently
-            ByteBuffer buf = _inputBuffer;
-            if ((buf.get(ptr++) == 'u')
-                && (buf.get(ptr++) == 'l')
-                && (buf.get(ptr++) == 'l')) {
-                int ch = buf.get(ptr) & 0xFF;
+            byte[] buf = _inputBuffer;
+            if ((buf[ptr++] == 'u')
+                   && (buf[ptr++] == 'l')
+                   && (buf[ptr++] == 'l')) {
+                int ch = buf[ptr] & 0xFF;
                 if (ch < INT_0 || (ch == INT_RBRACKET) || (ch == INT_RCURLY)) { // expected/allowed chars
                     _inputPtr = ptr;
                     return _valueComplete(JsonToken.VALUE_NULL);
@@ -1161,7 +1180,7 @@ public class NioWrappingNonBlockingJsonParser
     }
 
     protected JsonToken _finishKeywordToken(String expToken, int matched,
-        JsonToken result) throws IOException
+            JsonToken result) throws IOException
     {
         final int end = expToken.length();
 
@@ -1170,7 +1189,7 @@ public class NioWrappingNonBlockingJsonParser
                 _pending32 = matched;
                 return (_currToken = JsonToken.NOT_AVAILABLE);
             }
-            int ch = _inputBuffer.get(_inputPtr);
+            int ch = _inputBuffer[_inputPtr];
             if (matched == end) { // need to verify trailing separator
                 if (ch < INT_0 || (ch == INT_RBRACKET) || (ch == INT_RCURLY)) { // expected/allowed chars
                     return _valueComplete(result);
@@ -1189,7 +1208,7 @@ public class NioWrappingNonBlockingJsonParser
     }
 
     protected JsonToken _finishKeywordTokenWithEOF(String expToken, int matched,
-        JsonToken result) throws IOException
+            JsonToken result) throws IOException
     {
         if (matched == expToken.length()) {
             return (_currToken = result);
@@ -1210,7 +1229,7 @@ public class NioWrappingNonBlockingJsonParser
                 _minorState = MINOR_VALUE_TOKEN_NON_STD;
                 return (_currToken = JsonToken.NOT_AVAILABLE);
             }
-            int ch = _inputBuffer.get(_inputPtr);
+            int ch = _inputBuffer[_inputPtr];
             if (matched == end) { // need to verify trailing separator
                 if (ch < INT_0 || (ch == INT_RBRACKET) || (ch == INT_RCURLY)) { // expected/allowed chars
                     return _valueNonStdNumberComplete(type);
@@ -1241,7 +1260,7 @@ public class NioWrappingNonBlockingJsonParser
     protected JsonToken _finishErrorToken() throws IOException
     {
         while (_inputPtr < _inputEnd) {
-            int i = (int) _inputBuffer.get(_inputPtr++);
+            int i = (int) _inputBuffer[_inputPtr++];
 
 // !!! TODO: Decode UTF-8 characters properly...
 //            char c = (char) _decodeCharForError(i);
@@ -1269,7 +1288,7 @@ public class NioWrappingNonBlockingJsonParser
     {
         // !!! TODO: Include non-standard ones if enabled
         _reportError("Unrecognized token '%s': was expecting %s", _textBuffer.contentsAsString(),
-            _validJsonTokenList());
+                _validJsonTokenList());
         return JsonToken.NOT_AVAILABLE; // never gets here
     }
 
@@ -1278,6 +1297,15 @@ public class NioWrappingNonBlockingJsonParser
     /* Second-level decoding, Number decoding
     /**********************************************************************
      */
+
+    // [core#611]: allow non-standard floats like ".125"
+    protected JsonToken _startFloatThatStartsWithPeriod() throws IOException
+    {
+        _numberNegative = false;
+        _intLength = 0;
+        char[] outBuf = _textBuffer.emptyAndGetCurrentSegment();
+        return _startFloat(outBuf, 0, INT_PERIOD);
+    }
 
     protected JsonToken _startPositiveNumber(int ch) throws IOException
     {
@@ -1293,7 +1321,7 @@ public class NioWrappingNonBlockingJsonParser
 
         int outPtr = 1;
 
-        ch = _inputBuffer.get(_inputPtr) & 0xFF;
+        ch = _inputBuffer[_inputPtr] & 0xFF;
         while (true) {
             if (ch < INT_0) {
                 if (ch == INT_PERIOD) {
@@ -1322,7 +1350,7 @@ public class NioWrappingNonBlockingJsonParser
                 _textBuffer.setCurrentLength(outPtr);
                 return (_currToken = JsonToken.NOT_AVAILABLE);
             }
-            ch = _inputBuffer.get(_inputPtr) & 0xFF;
+            ch = _inputBuffer[_inputPtr] & 0xFF;
         }
         _intLength = outPtr;
         _textBuffer.setCurrentLength(outPtr);
@@ -1336,7 +1364,7 @@ public class NioWrappingNonBlockingJsonParser
             _minorState = MINOR_NUMBER_MINUS;
             return (_currToken = JsonToken.NOT_AVAILABLE);
         }
-        int ch = _inputBuffer.get(_inputPtr++) & 0xFF;
+        int ch = _inputBuffer[_inputPtr++] & 0xFF;
         if (ch <= INT_0) {
             if (ch == INT_0) {
                 return _finishNumberLeadingNegZeroes();
@@ -1358,7 +1386,7 @@ public class NioWrappingNonBlockingJsonParser
             _intLength = 1;
             return (_currToken = JsonToken.NOT_AVAILABLE);
         }
-        ch = _inputBuffer.get(_inputPtr);
+        ch = _inputBuffer[_inputPtr];
         int outPtr = 2;
 
         while (true) {
@@ -1388,7 +1416,7 @@ public class NioWrappingNonBlockingJsonParser
                 _textBuffer.setCurrentLength(outPtr);
                 return (_currToken = JsonToken.NOT_AVAILABLE);
             }
-            ch = _inputBuffer.get(_inputPtr) & 0xFF;
+            ch = _inputBuffer[_inputPtr] & 0xFF;
         }
         _intLength = outPtr-1;
         _textBuffer.setCurrentLength(outPtr);
@@ -1407,7 +1435,7 @@ public class NioWrappingNonBlockingJsonParser
         // the very first char after first zero since the most common case is that
         // there is a separator
 
-        int ch = _inputBuffer.get(ptr++) & 0xFF;
+        int ch = _inputBuffer[ptr++] & 0xFF;
         // one early check: leading zeroes may or may not be allowed
         if (ch < INT_0) {
             if (ch == INT_PERIOD) {
@@ -1430,7 +1458,7 @@ public class NioWrappingNonBlockingJsonParser
             //
             if ((ch != INT_RBRACKET) && (ch != INT_RCURLY)) {
                 reportUnexpectedNumberChar(ch,
-                    "expected digit (0-9), decimal point (.) or exponent indicator (e/E) to follow '0'");
+                        "expected digit (0-9), decimal point (.) or exponent indicator (e/E) to follow '0'");
             }
         } else { // leading zero case (zero followed by a digit)
             // leave inputPtr as is (i.e. "push back" digit)
@@ -1469,7 +1497,7 @@ public class NioWrappingNonBlockingJsonParser
                 _minorState = MINOR_NUMBER_ZERO;
                 return (_currToken = JsonToken.NOT_AVAILABLE);
             }
-            int ch = _inputBuffer.get(_inputPtr++) & 0xFF;
+            int ch = _inputBuffer[_inputPtr++] & 0xFF;
             if (ch < INT_0) {
                 if (ch == INT_PERIOD) {
                     char[] outBuf = _textBuffer.emptyAndGetCurrentSegment();
@@ -1489,12 +1517,12 @@ public class NioWrappingNonBlockingJsonParser
                 //
                 if ((ch != INT_RBRACKET) && (ch != INT_RCURLY)) {
                     reportUnexpectedNumberChar(ch,
-                        "expected digit (0-9), decimal point (.) or exponent indicator (e/E) to follow '0'");
+                            "expected digit (0-9), decimal point (.) or exponent indicator (e/E) to follow '0'");
                 }
             } else { // Number between 0 and 9
                 // although not guaranteed, seems likely valid separator (white space,
                 // comma, end bracket/curly); next time token needed will verify
-                if (!isEnabled(JsonReadFeature.ALLOW_LEADING_ZEROS_FOR_NUMBERS)) {
+                if ((_features & FEAT_MASK_LEADING_ZEROS) == 0) {
                     reportInvalidNumber("Leading zeroes not allowed");
                 }
                 if (ch == INT_0) { // coalesce multiple leading zeroes into just one
@@ -1520,7 +1548,7 @@ public class NioWrappingNonBlockingJsonParser
                 _minorState = MINOR_NUMBER_MINUSZERO;
                 return (_currToken = JsonToken.NOT_AVAILABLE);
             }
-            int ch = _inputBuffer.get(_inputPtr++) & 0xFF;
+            int ch = _inputBuffer[_inputPtr++] & 0xFF;
             if (ch < INT_0) {
                 if (ch == INT_PERIOD) {
                     char[] outBuf = _textBuffer.emptyAndGetCurrentSegment();
@@ -1542,12 +1570,12 @@ public class NioWrappingNonBlockingJsonParser
                 //
                 if ((ch != INT_RBRACKET) && (ch != INT_RCURLY)) {
                     reportUnexpectedNumberChar(ch,
-                        "expected digit (0-9), decimal point (.) or exponent indicator (e/E) to follow '0'");
+                            "expected digit (0-9), decimal point (.) or exponent indicator (e/E) to follow '0'");
                 }
             } else { // Number between 1 and 9; go integral
                 // although not guaranteed, seems likely valid separator (white space,
                 // comma, end bracket/curly); next time token needed will verify
-                if (!isEnabled(JsonReadFeature.ALLOW_LEADING_ZEROS_FOR_NUMBERS)) {
+                if ((_features & FEAT_MASK_LEADING_ZEROS) == 0) {
                     reportInvalidNumber("Leading zeroes not allowed");
                 }
                 if (ch == INT_0) { // coalesce multiple leading zeroes into just one
@@ -1575,7 +1603,7 @@ public class NioWrappingNonBlockingJsonParser
                 _textBuffer.setCurrentLength(outPtr);
                 return (_currToken = JsonToken.NOT_AVAILABLE);
             }
-            int ch = _inputBuffer.get(_inputPtr) & 0xFF;
+            int ch = _inputBuffer[_inputPtr] & 0xFF;
             if (ch < INT_0) {
                 if (ch == INT_PERIOD) {
                     _intLength = outPtr+negMod;
@@ -1620,7 +1648,7 @@ public class NioWrappingNonBlockingJsonParser
                     _fractLength = fractLen;
                     return (_currToken = JsonToken.NOT_AVAILABLE);
                 }
-                ch = _inputBuffer.get(_inputPtr++); // ok to have sign extension for now
+                ch = _inputBuffer[_inputPtr++]; // ok to have sign extension for now
                 if (ch < INT_0 || ch > INT_9) {
                     ch &= 0xFF; // but here we'll want to mask it to unsigned 8-bit
                     // must be followed by sequence of ints, one minimum
@@ -1649,7 +1677,7 @@ public class NioWrappingNonBlockingJsonParser
                 _expLength = 0;
                 return (_currToken = JsonToken.NOT_AVAILABLE);
             }
-            ch = _inputBuffer.get(_inputPtr++); // ok to have sign extension for now
+            ch = _inputBuffer[_inputPtr++]; // ok to have sign extension for now
             if (ch == INT_MINUS || ch == INT_PLUS) {
                 if (outPtr >= outBuf.length) {
                     outBuf = _textBuffer.expandCurrentSegment();
@@ -1661,7 +1689,7 @@ public class NioWrappingNonBlockingJsonParser
                     _expLength = 0;
                     return (_currToken = JsonToken.NOT_AVAILABLE);
                 }
-                ch = _inputBuffer.get(_inputPtr++);
+                ch = _inputBuffer[_inputPtr++];
             }
             while (ch >= INT_0 && ch <= INT_9) {
                 ++expLen;
@@ -1675,7 +1703,7 @@ public class NioWrappingNonBlockingJsonParser
                     _expLength = expLen;
                     return (_currToken = JsonToken.NOT_AVAILABLE);
                 }
-                ch = _inputBuffer.get(_inputPtr++);
+                ch = _inputBuffer[_inputPtr++];
             }
             // must be followed by sequence of ints, one minimum
             ch &= 0xFF;
@@ -1699,7 +1727,7 @@ public class NioWrappingNonBlockingJsonParser
 
         // caller guarantees at least one char; also, sign-extension not needed here
         int ch;
-        while (((ch = _inputBuffer.get(_inputPtr++)) >= INT_0) && (ch <= INT_9)) {
+        while (((ch = _inputBuffer[_inputPtr++]) >= INT_0) && (ch <= INT_9)) {
             ++fractLen;
             if (outPtr >= outBuf.length) {
                 outBuf = _textBuffer.expandCurrentSegment();
@@ -1729,7 +1757,7 @@ public class NioWrappingNonBlockingJsonParser
                 return JsonToken.NOT_AVAILABLE;
             }
             _minorState = MINOR_NUMBER_EXPONENT_DIGITS;
-            return _finishFloatExponent(true, _inputBuffer.get(_inputPtr++) & 0xFF);
+            return _finishFloatExponent(true, _inputBuffer[_inputPtr++] & 0xFF);
         }
 
         // push back the last char
@@ -1751,7 +1779,7 @@ public class NioWrappingNonBlockingJsonParser
                     _expLength = 0;
                     return JsonToken.NOT_AVAILABLE;
                 }
-                ch = _inputBuffer.get(_inputPtr++);
+                ch = _inputBuffer[_inputPtr++];
             }
         }
 
@@ -1770,7 +1798,7 @@ public class NioWrappingNonBlockingJsonParser
                 _expLength = expLen;
                 return JsonToken.NOT_AVAILABLE;
             }
-            ch = _inputBuffer.get(_inputPtr++);
+            ch = _inputBuffer[_inputPtr++];
         }
         // must be followed by sequence of ints, one minimum
         ch &= 0xFF;
@@ -1798,22 +1826,22 @@ public class NioWrappingNonBlockingJsonParser
         // decoding. Rather, we'll assume that part is ok (if not it will be
         // caught later on), and just handle quotes and backslashes here.
 
-        final ByteBuffer input = _inputBuffer;
+        final byte[] input = _inputBuffer;
         final int[] codes = _icLatin1;
         int ptr = _inputPtr;
 
-        int q0 = input.get(ptr++) & 0xFF;
+        int q0 = input[ptr++] & 0xFF;
         if (codes[q0] == 0) {
-            int i = input.get(ptr++) & 0xFF;
+            int i = input[ptr++] & 0xFF;
             if (codes[i] == 0) {
                 int q = (q0 << 8) | i;
-                i = input.get(ptr++) & 0xFF;
+                i = input[ptr++] & 0xFF;
                 if (codes[i] == 0) {
                     q = (q << 8) | i;
-                    i = input.get(ptr++) & 0xFF;
+                    i = input[ptr++] & 0xFF;
                     if (codes[i] == 0) {
                         q = (q << 8) | i;
-                        i = input.get(ptr++) & 0xFF;
+                        i = input[ptr++] & 0xFF;
                         if (codes[i] == 0) {
                             _quad1 = q;
                             return _parseMediumName(ptr, i);
@@ -1851,20 +1879,20 @@ public class NioWrappingNonBlockingJsonParser
 
     private final String _parseMediumName(int ptr, int q2) throws IOException
     {
-        final ByteBuffer input = _inputBuffer;
+        final byte[] input = _inputBuffer;
         final int[] codes = _icLatin1;
 
         // Ok, got 5 name bytes so far
-        int i = input.get(ptr++) & 0xFF;
+        int i = input[ptr++] & 0xFF;
         if (codes[i] == 0) {
             q2 = (q2 << 8) | i;
-            i = input.get(ptr++) & 0xFF;
+            i = input[ptr++] & 0xFF;
             if (codes[i] == 0) {
                 q2 = (q2 << 8) | i;
-                i = input.get(ptr++) & 0xFF;
+                i = input[ptr++] & 0xFF;
                 if (codes[i] == 0) {
                     q2 = (q2 << 8) | i;
-                    i = input.get(ptr++) & 0xFF;
+                    i = input[ptr++] & 0xFF;
                     if (codes[i] == 0) {
                         return _parseMediumName2(ptr, i, q2);
                     }
@@ -1895,11 +1923,11 @@ public class NioWrappingNonBlockingJsonParser
 
     private final String _parseMediumName2(int ptr, int q3, final int q2) throws IOException
     {
-        final ByteBuffer input = _inputBuffer;
+        final byte[] input = _inputBuffer;
         final int[] codes = _icLatin1;
 
         // Got 9 name bytes so far
-        int i = input.get(ptr++) & 0xFF;
+        int i = input[ptr++] & 0xFF;
         if (codes[i] != 0) {
             if (i == INT_QUOTE) { // 9 bytes
                 _inputPtr = ptr;
@@ -1908,7 +1936,7 @@ public class NioWrappingNonBlockingJsonParser
             return null;
         }
         q3 = (q3 << 8) | i;
-        i = input.get(ptr++) & 0xFF;
+        i = input[ptr++] & 0xFF;
         if (codes[i] != 0) {
             if (i == INT_QUOTE) { // 10 bytes
                 _inputPtr = ptr;
@@ -1917,7 +1945,7 @@ public class NioWrappingNonBlockingJsonParser
             return null;
         }
         q3 = (q3 << 8) | i;
-        i = input.get(ptr++) & 0xFF;
+        i = input[ptr++] & 0xFF;
         if (codes[i] != 0) {
             if (i == INT_QUOTE) { // 11 bytes
                 _inputPtr = ptr;
@@ -1926,7 +1954,7 @@ public class NioWrappingNonBlockingJsonParser
             return null;
         }
         q3 = (q3 << 8) | i;
-        i = input.get(ptr++) & 0xFF;
+        i = input[ptr++] & 0xFF;
         if (i == INT_QUOTE) { // 12 bytes
             _inputPtr = ptr;
             return _findName(_quad1, q2, q3, 4);
@@ -1959,7 +1987,7 @@ public class NioWrappingNonBlockingJsonParser
                 _minorState = MINOR_FIELD_NAME;
                 return (_currToken = JsonToken.NOT_AVAILABLE);
             }
-            int ch = _inputBuffer.get(_inputPtr++) & 0xFF;
+            int ch = _inputBuffer[_inputPtr++] & 0xFF;
             if (codes[ch] == 0) {
                 if (currQuadBytes < 4) {
                     ++currQuadBytes;
@@ -2063,25 +2091,26 @@ public class NioWrappingNonBlockingJsonParser
     {
         // First: may allow single quotes
         switch (ch) {
-            case '#':
-                // Careful, since this may alternatively be leading char of unquoted name...
-                if (isEnabled(JsonReadFeature.ALLOW_YAML_COMMENTS)) {
-                    return _finishHashComment(MINOR_FIELD_LEADING_WS);
-                }
-                break;
-            case '/':
-                return _startSlashComment(MINOR_FIELD_LEADING_WS);
-            case '\'':
-                if (isEnabled(JsonReadFeature.ALLOW_SINGLE_QUOTES)) {
-                    return _finishAposName(0, 0, 0);
-                }
-                break;
-            case INT_RBRACKET: // for better error reporting...
-                return _closeArrayScope();
+        case '#':
+            // Careful, since this may alternatively be leading char of
+            // unquoted name...
+            if ((_features & FEAT_MASK_ALLOW_YAML_COMMENTS) != 0) {
+                return _finishHashComment(MINOR_FIELD_LEADING_WS);
+            }
+            break;
+        case '/':
+            return _startSlashComment(MINOR_FIELD_LEADING_WS);
+        case '\'':
+            if ((_features & FEAT_MASK_ALLOW_SINGLE_QUOTES) != 0) {
+                return _finishAposName(0, 0, 0);
+            }
+            break;
+        case INT_RBRACKET: // for better error reporting...
+            return _closeArrayScope();
         }
         // allow unquoted names if feature enabled:
-        if (!isEnabled(JsonReadFeature.ALLOW_UNQUOTED_FIELD_NAMES)) {
-            // !!! TODO: Decode UTF-8 characters properly...
+        if ((_features & FEAT_MASK_ALLOW_UNQUOTED_NAMES) == 0) {
+         // !!! TODO: Decode UTF-8 characters properly...
 //            char c = (char) _decodeCharForError(ch);
             char c = (char) ch;
             _reportUnexpectedChar(c, "was expecting double-quote to start field name");
@@ -2118,7 +2147,7 @@ public class NioWrappingNonBlockingJsonParser
                 _minorState = MINOR_FIELD_UNQUOTED_NAME;
                 return (_currToken = JsonToken.NOT_AVAILABLE);
             }
-            int ch = _inputBuffer.get(_inputPtr) & 0xFF;
+            int ch = _inputBuffer[_inputPtr] & 0xFF;
             if (codes[ch] != 0) {
                 break;
             }
@@ -2164,7 +2193,7 @@ public class NioWrappingNonBlockingJsonParser
                 _minorState = MINOR_FIELD_APOS_NAME;
                 return (_currToken = JsonToken.NOT_AVAILABLE);
             }
-            int ch = _inputBuffer.get(_inputPtr++) & 0xFF;
+            int ch = _inputBuffer[_inputPtr++] & 0xFF;
             if (ch == INT_APOS) {
                 break;
             }
@@ -2306,34 +2335,34 @@ public class NioWrappingNonBlockingJsonParser
             _quotedDigits = bytesRead;
             return -1;
         }
-        int c = _inputBuffer.get(_inputPtr++);
+        int c = _inputBuffer[_inputPtr++];
         if (bytesRead == -1) { // expecting first char after backslash
             switch (c) {
                 // First, ones that are mapped
-                case 'b':
-                    return '\b';
-                case 't':
-                    return '\t';
-                case 'n':
-                    return '\n';
-                case 'f':
-                    return '\f';
-                case 'r':
-                    return '\r';
+            case 'b':
+                return '\b';
+            case 't':
+                return '\t';
+            case 'n':
+                return '\n';
+            case 'f':
+                return '\f';
+            case 'r':
+                return '\r';
 
                 // And these are to be returned as they are
-                case '"':
-                case '/':
-                case '\\':
-                    return c;
+            case '"':
+            case '/':
+            case '\\':
+                return c;
 
-                case 'u': // and finally hex-escaped
-                    break;
+            case 'u': // and finally hex-escaped
+                break;
 
-                default:
+            default:
                 {
-                    // !!! TODO: Decode UTF-8 characters properly...
-                    //              char ch = (char) _decodeCharForError(c);
+                 // !!! TODO: Decode UTF-8 characters properly...
+    //              char ch = (char) _decodeCharForError(c);
                     char ch = (char) c;
                     return _handleUnrecognizedCharacterEscape(ch);
                 }
@@ -2343,7 +2372,7 @@ public class NioWrappingNonBlockingJsonParser
                 _quoted32 = 0;
                 return -1;
             }
-            c = _inputBuffer.get(_inputPtr++);
+            c = _inputBuffer[_inputPtr++];
             bytesRead = 0;
         }
         c &= 0xFF;
@@ -2361,7 +2390,7 @@ public class NioWrappingNonBlockingJsonParser
                 _quoted32 = value;
                 return -1;
             }
-            c = _inputBuffer.get(_inputPtr++) & 0xFF;
+            c = _inputBuffer[_inputPtr++] & 0xFF;
         }
     }
 
@@ -2379,9 +2408,9 @@ public class NioWrappingNonBlockingJsonParser
         final int[] codes = _icUTF8;
 
         final int max = Math.min(_inputEnd, (ptr + outBuf.length));
-        final ByteBuffer inputBuffer = _inputBuffer;
+        final byte[] inputBuffer = _inputBuffer;
         while (ptr < max) {
-            int c = (int) inputBuffer.get(ptr) & 0xFF;
+            int c = (int) inputBuffer[ptr] & 0xFF;
             if (codes[c] != 0) {
                 if (c == INT_QUOTE) {
                     _inputPtr = ptr+1;
@@ -2404,7 +2433,7 @@ public class NioWrappingNonBlockingJsonParser
 
         // Here we do want to do full decoding, hence:
         final int[] codes = _icUTF8;
-        final ByteBuffer inputBuffer = _inputBuffer;
+        final byte[] inputBuffer = _inputBuffer;
 
         char[] outBuf = _textBuffer.getBufferWithoutReset();
         int outPtr = _textBuffer.getCurrentSegmentSize();
@@ -2428,7 +2457,7 @@ public class NioWrappingNonBlockingJsonParser
                 }
                 final int max = Math.min(_inputEnd, (ptr + (outBuf.length - outPtr)));
                 while (ptr < max) {
-                    c = inputBuffer.get(ptr++) & 0xFF;
+                    c = inputBuffer[ptr++] & 0xFF;
                     if (codes[c] != 0) {
                         break ascii_loop;
                     }
@@ -2456,37 +2485,37 @@ public class NioWrappingNonBlockingJsonParser
             }
             // otherwise use inlined
             switch (codes[c]) {
-                case 1: // backslash
-                    _inputPtr = ptr;
-                    c = _decodeFastCharEscape(); // since we know it's not split
-                    ptr = _inputPtr;
-                    break;
-                case 2: // 2-byte UTF
-                    c = _decodeUTF8_2(c, _inputBuffer.get(ptr++));
-                    break;
-                case 3: // 3-byte UTF
-                    c = _decodeUTF8_3(c, _inputBuffer.get(ptr++), _inputBuffer.get(ptr++));
-                    break;
-                case 4: // 4-byte UTF
-                    c = _decodeUTF8_4(c, _inputBuffer.get(ptr++), _inputBuffer.get(ptr++),
-                        _inputBuffer.get(ptr++));
-                    // Let's add first part right away:
-                    outBuf[outPtr++] = (char) (0xD800 | (c >> 10));
-                    if (outPtr >= outBuf.length) {
-                        outBuf = _textBuffer.finishCurrentSegment();
-                        outPtr = 0;
-                    }
-                    c = 0xDC00 | (c & 0x3FF);
-                    // And let the other char output down below
-                    break;
-                default:
-                    if (c < INT_SPACE) {
-                        // Note: call can now actually return (to allow unquoted linefeeds)
-                        _throwUnquotedSpace(c, "string value");
-                    } else {
-                        // Is this good enough error message?
-                        _reportInvalidChar(c);
-                    }
+            case 1: // backslash
+                _inputPtr = ptr;
+                c = _decodeFastCharEscape(); // since we know it's not split
+                ptr = _inputPtr;
+                break;
+            case 2: // 2-byte UTF
+                c = _decodeUTF8_2(c, _inputBuffer[ptr++]);
+                break;
+            case 3: // 3-byte UTF
+                c = _decodeUTF8_3(c, _inputBuffer[ptr++], _inputBuffer[ptr++]);
+                break;
+            case 4: // 4-byte UTF
+                c = _decodeUTF8_4(c, _inputBuffer[ptr++], _inputBuffer[ptr++],
+                        _inputBuffer[ptr++]);
+                // Let's add first part right away:
+                outBuf[outPtr++] = (char) (0xD800 | (c >> 10));
+                if (outPtr >= outBuf.length) {
+                    outBuf = _textBuffer.finishCurrentSegment();
+                    outPtr = 0;
+                }
+                c = 0xDC00 | (c & 0x3FF);
+                // And let the other char output down below
+                break;
+            default:
+                if (c < INT_SPACE) {
+                    // Note: call can now actually return (to allow unquoted linefeeds)
+                    _throwUnquotedSpace(c, "string value");
+                } else {
+                    // Is this good enough error message?
+                    _reportInvalidChar(c);
+                }
             }
             // Need more room?
             if (outPtr >= outBuf.length) {
@@ -2506,9 +2535,9 @@ public class NioWrappingNonBlockingJsonParser
         final int[] codes = _icUTF8;
 
         final int max = Math.min(_inputEnd, (ptr + outBuf.length));
-        final ByteBuffer inputBuffer = _inputBuffer;
+        final byte[] inputBuffer = _inputBuffer;
         while (ptr < max) {
-            int c = (int) inputBuffer.get(ptr) & 0xFF;
+            int c = (int) inputBuffer[ptr] & 0xFF;
             if (c == INT_APOS) {
                 _inputPtr = ptr+1;
                 _textBuffer.setCurrentLength(outPtr);
@@ -2530,7 +2559,7 @@ public class NioWrappingNonBlockingJsonParser
     {
         int c;
         final int[] codes = _icUTF8;
-        final ByteBuffer inputBuffer = _inputBuffer;
+        final byte[] inputBuffer = _inputBuffer;
 
         char[] outBuf = _textBuffer.getBufferWithoutReset();
         int outPtr = _textBuffer.getCurrentSegmentSize();
@@ -2553,7 +2582,7 @@ public class NioWrappingNonBlockingJsonParser
                 }
                 final int max = Math.min(_inputEnd, (ptr + (outBuf.length - outPtr)));
                 while (ptr < max) {
-                    c = inputBuffer.get(ptr++) & 0xFF;
+                    c = inputBuffer[ptr++] & 0xFF;
                     if ((codes[c] != 0) && (c != INT_QUOTE)) {
                         break ascii_loop;
                     }
@@ -2581,37 +2610,37 @@ public class NioWrappingNonBlockingJsonParser
             }
             // otherwise use inlined
             switch (codes[c]) {
-                case 1: // backslash
-                    _inputPtr = ptr;
-                    c = _decodeFastCharEscape(); // since we know it's not split
-                    ptr = _inputPtr;
-                    break;
-                case 2: // 2-byte UTF
-                    c = _decodeUTF8_2(c, _inputBuffer.get(ptr++));
-                    break;
-                case 3: // 3-byte UTF
-                    c = _decodeUTF8_3(c, _inputBuffer.get(ptr++), _inputBuffer.get(ptr++));
-                    break;
-                case 4: // 4-byte UTF
-                    c = _decodeUTF8_4(c, _inputBuffer.get(ptr++), _inputBuffer.get(ptr++),
-                        _inputBuffer.get(ptr++));
-                    // Let's add first part right away:
-                    outBuf[outPtr++] = (char) (0xD800 | (c >> 10));
-                    if (outPtr >= outBuf.length) {
-                        outBuf = _textBuffer.finishCurrentSegment();
-                        outPtr = 0;
-                    }
-                    c = 0xDC00 | (c & 0x3FF);
-                    // And let the other char output down below
-                    break;
-                default:
-                    if (c < INT_SPACE) {
-                        // Note: call can now actually return (to allow unquoted linefeeds)
-                        _throwUnquotedSpace(c, "string value");
-                    } else {
-                        // Is this good enough error message?
-                        _reportInvalidChar(c);
-                    }
+            case 1: // backslash
+                _inputPtr = ptr;
+                c = _decodeFastCharEscape(); // since we know it's not split
+                ptr = _inputPtr;
+                break;
+            case 2: // 2-byte UTF
+                c = _decodeUTF8_2(c, _inputBuffer[ptr++]);
+                break;
+            case 3: // 3-byte UTF
+                c = _decodeUTF8_3(c, _inputBuffer[ptr++], _inputBuffer[ptr++]);
+                break;
+            case 4: // 4-byte UTF
+                c = _decodeUTF8_4(c, _inputBuffer[ptr++], _inputBuffer[ptr++],
+                        _inputBuffer[ptr++]);
+                // Let's add first part right away:
+                outBuf[outPtr++] = (char) (0xD800 | (c >> 10));
+                if (outPtr >= outBuf.length) {
+                    outBuf = _textBuffer.finishCurrentSegment();
+                    outPtr = 0;
+                }
+                c = 0xDC00 | (c & 0x3FF);
+                // And let the other char output down below
+                break;
+            default:
+                if (c < INT_SPACE) {
+                    // Note: call can now actually return (to allow unquoted linefeeds)
+                    _throwUnquotedSpace(c, "string value");
+                } else {
+                    // Is this good enough error message?
+                    _reportInvalidChar(c);
+                }
             }
             // Need more room?
             if (outPtr >= outBuf.length) {
@@ -2624,55 +2653,55 @@ public class NioWrappingNonBlockingJsonParser
     }
 
     private final boolean _decodeSplitMultiByte(int c, int type, boolean gotNext)
-        throws IOException
+            throws IOException
     {
         switch (type) {
-            case 1:
-                c = _decodeSplitEscaped(0, -1);
-                if (c < 0) {
-                    _minorState = MINOR_VALUE_STRING_ESCAPE;
-                    return false;
-                }
+        case 1:
+            c = _decodeSplitEscaped(0, -1);
+            if (c < 0) {
+                _minorState = MINOR_VALUE_STRING_ESCAPE;
+                return false;
+            }
+            _textBuffer.append((char) c);
+            return true;
+        case 2: // 2-byte UTF; easy, either got both, or just miss one
+            if (gotNext) {
+                // NOTE: always succeeds, no need to check
+                c = _decodeUTF8_2(c, _inputBuffer[_inputPtr++]);
                 _textBuffer.append((char) c);
                 return true;
-            case 2: // 2-byte UTF; easy, either got both, or just miss one
-                if (gotNext) {
-                    // NOTE: always succeeds, no need to check
-                    c = _decodeUTF8_2(c, _inputBuffer.get(_inputPtr++));
-                    _textBuffer.append((char) c);
-                    return true;
-                }
-                _minorState = MINOR_VALUE_STRING_UTF8_2;
-                _pending32 = c;
-                return false;
-            case 3: // 3-byte UTF
-                c &= 0x0F;
-                if (gotNext) {
-                    return _decodeSplitUTF8_3(c, 1, _inputBuffer.get(_inputPtr++));
-                }
-                _minorState = MINOR_VALUE_STRING_UTF8_3;
-                _pending32 = c;
-                _pendingBytes = 1;
-                return false;
-            case 4: // 4-byte UTF
-                c &= 0x07;
-                if (gotNext) {
-                    return _decodeSplitUTF8_4(c, 1, _inputBuffer.get(_inputPtr++));
-                }
-                _pending32 = c;
-                _pendingBytes = 1;
-                _minorState = MINOR_VALUE_STRING_UTF8_4;
-                return false;
-            default:
-                if (c < INT_SPACE) {
-                    // Note: call can now actually return (to allow unquoted linefeeds)
-                    _throwUnquotedSpace(c, "string value");
-                } else {
-                    // Is this good enough error message?
-                    _reportInvalidChar(c);
-                }
-                _textBuffer.append((char) c);
-                return true;
+            }
+            _minorState = MINOR_VALUE_STRING_UTF8_2;
+            _pending32 = c;
+            return false;
+        case 3: // 3-byte UTF
+            c &= 0x0F;
+            if (gotNext) {
+                return _decodeSplitUTF8_3(c, 1, _inputBuffer[_inputPtr++]);
+            }
+            _minorState = MINOR_VALUE_STRING_UTF8_3;
+            _pending32 = c;
+            _pendingBytes = 1;
+            return false;
+        case 4: // 4-byte UTF
+            c &= 0x07;
+            if (gotNext) {
+                return _decodeSplitUTF8_4(c, 1, _inputBuffer[_inputPtr++]);
+            }
+            _pending32 = c;
+            _pendingBytes = 1;
+            _minorState = MINOR_VALUE_STRING_UTF8_4;
+            return false;
+        default:
+            if (c < INT_SPACE) {
+                // Note: call can now actually return (to allow unquoted linefeeds)
+                _throwUnquotedSpace(c, "string value");
+            } else {
+                // Is this good enough error message?
+                _reportInvalidChar(c);
+            }
+            _textBuffer.append((char) c);
+            return true;
         }
     }
 
@@ -2690,7 +2719,7 @@ public class NioWrappingNonBlockingJsonParser
                 _pendingBytes = 2;
                 return false;
             }
-            next = _inputBuffer.get(_inputPtr++);
+            next = _inputBuffer[_inputPtr++];
         }
         if ((next & 0xC0) != 0x080) {
             _reportInvalidOther(next & 0xFF, _inputPtr);
@@ -2716,7 +2745,7 @@ public class NioWrappingNonBlockingJsonParser
                 return false;
             }
             prevCount = 2;
-            next = _inputBuffer.get(_inputPtr++);
+            next = _inputBuffer[_inputPtr++];
         }
         if (prevCount == 2) {
             if ((next & 0xC0) != 0x080) {
@@ -2729,7 +2758,7 @@ public class NioWrappingNonBlockingJsonParser
                 _pendingBytes = 3;
                 return false;
             }
-            next = _inputBuffer.get(_inputPtr++);
+            next = _inputBuffer[_inputPtr++];
         }
         if ((next & 0xC0) != 0x080) {
             _reportInvalidOther(next & 0xFF, _inputPtr);
@@ -2760,52 +2789,52 @@ public class NioWrappingNonBlockingJsonParser
 
     private final int _decodeFastCharEscape() throws IOException
     {
-        int c = (int) _inputBuffer.get(_inputPtr++);
+        int c = (int) _inputBuffer[_inputPtr++];
         switch (c) {
             // First, ones that are mapped
-            case 'b':
-                return '\b';
-            case 't':
-                return '\t';
-            case 'n':
-                return '\n';
-            case 'f':
-                return '\f';
-            case 'r':
-                return '\r';
+        case 'b':
+            return '\b';
+        case 't':
+            return '\t';
+        case 'n':
+            return '\n';
+        case 'f':
+            return '\f';
+        case 'r':
+            return '\r';
 
             // And these are to be returned as they are
-            case '"':
-            case '/':
-            case '\\':
-                return (char) c;
+        case '"':
+        case '/':
+        case '\\':
+            return (char) c;
 
-            case 'u': // and finally hex-escaped
-                break;
+        case 'u': // and finally hex-escaped
+            break;
 
-            default:
+        default:
             {
-                // !!! TODO: Decode UTF-8 characters properly...
+             // !!! TODO: Decode UTF-8 characters properly...
 //              char ch = (char) _decodeCharForError(c);
                 char ch = (char) c;
                 return _handleUnrecognizedCharacterEscape(ch);
             }
         }
 
-        int ch = (int) _inputBuffer.get(_inputPtr++);
+        int ch = (int) _inputBuffer[_inputPtr++];
         int digit = CharTypes.charToHex(ch);
         int result = digit;
 
         if (digit >= 0) {
-            ch = (int) _inputBuffer.get(_inputPtr++);
+            ch = (int) _inputBuffer[_inputPtr++];
             digit = CharTypes.charToHex(ch);
             if (digit >= 0) {
                 result = (result << 4) | digit;
-                ch = (int) _inputBuffer.get(_inputPtr++);
+                ch = (int) _inputBuffer[_inputPtr++];
                 digit = CharTypes.charToHex(ch);
                 if (digit >= 0) {
                     result = (result << 4) | digit;
-                    ch = (int) _inputBuffer.get(_inputPtr++);
+                    ch = (int) _inputBuffer[_inputPtr++];
                     digit = CharTypes.charToHex(ch);
                     if (digit >= 0) {
                         return (result << 4) | digit;
@@ -2867,36 +2896,4 @@ public class NioWrappingNonBlockingJsonParser
     /* Internal methods, other
     /**********************************************************************
      */
-
-    // Only one of buf/nioBuf is non-null
-    private final void feedInput(byte[] buf, ByteBuffer nioBuf, int start, int end) throws IOException
-    {
-        // Must not have remaining input
-        if (_inputPtr < _inputEnd) {
-            _reportError("Still have %d undecoded bytes, should not call 'feedInput'", _inputEnd - _inputPtr);
-        }
-        if (end < start) {
-            _reportError("Input end (%d) may not be before start (%d)", end, start);
-        }
-        // and shouldn't have been marked as end-of-input
-        if (_endOfInput) {
-            _reportError("Already closed, can not feed more input");
-        }
-        // Time to update pointers first
-        _currInputProcessed += _origBufferLen;
-
-        // Also need to adjust row start, to work as if it extended into the past wrt new buffer
-        _currInputRowStart = start - (_inputEnd - _currInputRowStart);
-
-        // And then update buffer settings
-        _currBufferStart = start;
-        _inputPtr = start;
-        _inputEnd = end;
-        _origBufferLen = end - start;
-        if (buf != null) {
-            _inputBuffer = ByteBuffer.wrap(buf);
-        } else {
-            _inputBuffer = nioBuf;
-        }
-    }
 }

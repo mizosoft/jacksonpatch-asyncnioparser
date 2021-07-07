@@ -29,7 +29,6 @@ import org.openjdk.jmh.runner.options.OptionsBuilder;
 @BenchmarkMode(Mode.Throughput)
 @SuppressWarnings("unused")
 public class BufferAccessorBenchmark {
-
   private static final int BATCH_SIZE = 4 * 1024;
 
   @Benchmark
@@ -58,7 +57,6 @@ public class BufferAccessorBenchmark {
 
   @State(Scope.Thread)
   public static class ByteArrayHandle {
-
     byte[] array;
 
     @Setup
@@ -69,7 +67,6 @@ public class BufferAccessorBenchmark {
 
   @State(Scope.Thread)
   public static class ByteBufferHandle {
-
     ByteBuffer buffer;
 
     @Setup
@@ -80,7 +77,6 @@ public class BufferAccessorBenchmark {
 
   @State(Scope.Thread)
   public static class DirectByteBufferHandle {
-
     ByteBuffer buffer;
 
     @Setup

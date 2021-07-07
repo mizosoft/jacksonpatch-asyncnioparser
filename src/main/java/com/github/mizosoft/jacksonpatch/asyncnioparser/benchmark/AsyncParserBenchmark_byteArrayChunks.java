@@ -1,9 +1,8 @@
 package com.github.mizosoft.jacksonpatch.asyncnioparser.benchmark;
 
 import com.fasterxml.jackson.core.JsonParser;
-import com.fasterxml.jackson.core.ObjectReadContext;
 import com.fasterxml.jackson.core.async.ByteArrayFeeder;
-import com.fasterxml.jackson.core.json.JsonFactory;
+import com.github.mizosoft.jacksonpatch.asyncnioparser.PatchedJsonFactory;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.List;
@@ -19,15 +18,14 @@ import org.openjdk.jmh.runner.options.OptionsBuilder;
 /** Benchmark for feeding input via {@code byte[]} chunks. */
 @SuppressWarnings("unused")
 public class AsyncParserBenchmark_byteArrayChunks extends AbstractAsyncParserBenchmark {
-
   @Param({"/payload/jarray_small.json", "/payload/jobject_large.json"})
   public String payloadLocation;
 
-  @Param
+  @Param("NON_PATCHED")
   public JsonFactoryPatchType patch;
 
   private List<byte[]> chunks;
-  private JsonFactory factory;
+  private PatchedJsonFactory factory;
 
   @Setup
   public void setup() {
@@ -38,8 +36,8 @@ public class AsyncParserBenchmark_byteArrayChunks extends AbstractAsyncParserBen
 
   @Benchmark
   public void readChunks(Blackhole blackhole) throws IOException {
-    JsonParser parser = factory.createNonBlockingByteArrayParser(ObjectReadContext.empty());
-    ByteArrayFeeder feeder = ((ByteArrayFeeder) parser.getNonBlockingInputFeeder());
+    JsonParser parser = factory.createNonBlockingByteArrayParser();
+    ByteArrayFeeder feeder = (ByteArrayFeeder) parser.getNonBlockingInputFeeder();
     for (byte[] chunk : chunks) {
       feeder.feedInput(chunk, 0, chunk.length);
       consumeTokens(parser, blackhole);
@@ -49,10 +47,11 @@ public class AsyncParserBenchmark_byteArrayChunks extends AbstractAsyncParserBen
   }
 
   public static void main(String[] args) throws RunnerException {
-    Options options = new OptionsBuilder()
-        .include(AsyncParserBenchmark_byteArrayChunks.class.getSimpleName())
-        .shouldFailOnError(true)
-        .build();
+    Options options =
+        new OptionsBuilder()
+            .include(AsyncParserBenchmark_byteArrayChunks.class.getSimpleName())
+            .shouldFailOnError(true)
+            .build();
     new Runner(options).run();
   }
 }

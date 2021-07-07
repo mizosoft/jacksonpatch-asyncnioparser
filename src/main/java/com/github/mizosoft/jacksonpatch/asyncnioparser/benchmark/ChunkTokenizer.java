@@ -5,7 +5,6 @@ import java.util.ArrayList;
 import java.util.List;
 
 public class ChunkTokenizer {
-
   static List<ByteBuffer> tokenizeToBuffers(ByteBuffer input, int[] chunkSizes) {
     List<ByteBuffer> tokens = new ArrayList<>();
     for (int i = 0; input.hasRemaining(); i++) {

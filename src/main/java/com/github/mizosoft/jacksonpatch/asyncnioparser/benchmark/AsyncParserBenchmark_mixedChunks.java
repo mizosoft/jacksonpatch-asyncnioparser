@@ -1,11 +1,10 @@
 package com.github.mizosoft.jacksonpatch.asyncnioparser.benchmark;
 
+import com.fasterxml.jackson.core.JsonFactory;
 import com.fasterxml.jackson.core.JsonParser;
-import com.fasterxml.jackson.core.ObjectReadContext;
 import com.fasterxml.jackson.core.async.ByteArrayFeeder;
 import com.fasterxml.jackson.core.async.ByteBufferFeeder;
 import com.github.mizosoft.jacksonpatch.asyncnioparser.PatchedJsonFactory;
-import com.github.mizosoft.jacksonpatch.asyncnioparser.benchmark.BufferAccessorBenchmark.ByteBufferHandle;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
@@ -23,7 +22,6 @@ import org.openjdk.jmh.runner.options.OptionsBuilder;
 /** Benchmark feeding mixed chunks to parser, to see what skewing JVM branch prediction would do. */
 @SuppressWarnings({"unused", "FieldCanBeLocal"})
 public class AsyncParserBenchmark_mixedChunks extends AbstractAsyncParserBenchmark {
-
   @Param({"/payload/jarray_small.json", "/payload/jobject_large.json"})
   public String payloadLocation;
 
@@ -53,7 +51,7 @@ public class AsyncParserBenchmark_mixedChunks extends AbstractAsyncParserBenchma
 
   @Benchmark
   public void readChunks(Blackhole blackhole) throws IOException {
-    JsonParser parser = factory.createNonBlockingByteBufferParser(ObjectReadContext.empty());
+    JsonParser parser = factory.createNonBlockingByteBufferParser();
     ByteArrayFeeder arrayFeeder = ((ByteArrayFeeder) parser.getNonBlockingInputFeeder());
     ByteBufferFeeder bufferFeeder = ((ByteBufferFeeder) parser.getNonBlockingInputFeeder());
     Iterator<byte[]> arrays = arrayChunks.iterator();
@@ -72,10 +70,11 @@ public class AsyncParserBenchmark_mixedChunks extends AbstractAsyncParserBenchma
   }
 
   public static void main(String[] args) throws RunnerException {
-    Options options = new OptionsBuilder()
-        .include(AsyncParserBenchmark_mixedChunks.class.getSimpleName())
-        .shouldFailOnError(true)
-        .build();
+    Options options =
+        new OptionsBuilder()
+            .include(AsyncParserBenchmark_mixedChunks.class.getSimpleName())
+            .shouldFailOnError(true)
+            .build();
     new Runner(options).run();
   }
 }

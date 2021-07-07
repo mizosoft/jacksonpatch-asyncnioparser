@@ -31,7 +31,6 @@ import org.openjdk.jmh.infra.Blackhole;
 @OutputTimeUnit(TimeUnit.SECONDS)
 @BenchmarkMode(Mode.Throughput)
 public class AbstractAsyncParserBenchmark {
-
   // arbitrary sizes
   static final int[] CHUNK_SIZES = {512, 555, 11, 2048, 555, 12};
 
@@ -64,8 +63,8 @@ public class AbstractAsyncParserBenchmark {
   // This method consumes parser tokens to trigger actual parsing, tricking the JVM into thinking
   // we actually need parsed tokens via JMH's Blackhole, for preventing DCE. Modified from
   // TokenBuffer::copyCurrentEvent.
-  private static void consumeCurrentToken(
-      JsonParser parser, Blackhole blackhole) throws IOException {
+  private static void consumeCurrentToken(JsonParser parser, Blackhole blackhole)
+      throws IOException {
     switch (parser.currentToken()) {
       case START_OBJECT:
         blackhole.consume("{");

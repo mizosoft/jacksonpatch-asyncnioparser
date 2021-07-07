@@ -1,7 +1,6 @@
 package com.github.mizosoft.jacksonpatch.asyncnioparser.benchmark;
 
 import com.fasterxml.jackson.core.JsonParser;
-import com.fasterxml.jackson.core.ObjectReadContext;
 import com.fasterxml.jackson.core.async.ByteBufferFeeder;
 import com.github.mizosoft.jacksonpatch.asyncnioparser.PatchedJsonFactory;
 import java.io.IOException;
@@ -19,7 +18,6 @@ import org.openjdk.jmh.runner.options.OptionsBuilder;
 /** Benchmark for feeding input via {@code ByteBuffer} chunks. */
 @SuppressWarnings({"unused", "FieldCanBeLocal"})
 public class AsyncParserBenchmark_byteBufferChunks extends AbstractAsyncParserBenchmark {
-
   @Param({"/payload/jarray_small.json", "/payload/jobject_large.json"})
   public String payloadLocation;
 
@@ -38,8 +36,8 @@ public class AsyncParserBenchmark_byteBufferChunks extends AbstractAsyncParserBe
 
   @Benchmark
   public void readChunks(Blackhole blackhole) throws IOException {
-    JsonParser parser = factory.createNonBlockingByteBufferParser(ObjectReadContext.empty());
-    ByteBufferFeeder feeder = ((ByteBufferFeeder) parser.getNonBlockingInputFeeder());
+    JsonParser parser = factory.createNonBlockingByteBufferParser();
+    ByteBufferFeeder feeder = (ByteBufferFeeder) parser.getNonBlockingInputFeeder();
     for (ByteBuffer chunk : chunks) {
       feeder.feedInput(chunk);
       consumeTokens(parser, blackhole);
@@ -49,10 +47,11 @@ public class AsyncParserBenchmark_byteBufferChunks extends AbstractAsyncParserBe
   }
 
   public static void main(String[] args) throws RunnerException {
-    Options options = new OptionsBuilder()
-        .include(AsyncParserBenchmark_byteBufferChunks.class.getSimpleName())
-        .shouldFailOnError(true)
-        .build();
+    Options options =
+        new OptionsBuilder()
+            .include(AsyncParserBenchmark_byteBufferChunks.class.getSimpleName())
+            .shouldFailOnError(true)
+            .build();
     new Runner(options).run();
   }
 }
