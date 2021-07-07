@@ -86,10 +86,11 @@ public class BufferAccessorBenchmark {
   }
 
   public static void main(String[] args) throws RunnerException {
-    Options options = new OptionsBuilder()
-        .include(BufferAccessorBenchmark.class.getSimpleName())
-        .shouldFailOnError(true)
-        .build();
+    Options options =
+        new OptionsBuilder()
+            .include(BufferAccessorBenchmark.class.getSimpleName())
+            .shouldFailOnError(true)
+            .build();
     new Runner(options).run();
   }
 }

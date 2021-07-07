@@ -1,6 +1,5 @@
 package com.github.mizosoft.jacksonpatch.asyncnioparser.benchmark;
 
-import com.fasterxml.jackson.core.JsonFactory;
 import com.fasterxml.jackson.core.JsonParser;
 import com.fasterxml.jackson.core.async.ByteArrayFeeder;
 import com.fasterxml.jackson.core.async.ByteBufferFeeder;
