@@ -1,3 +1,5 @@
+Note: results aren't updated
+
 # Overview
 
 Looking for possible https://github.com/FasterXML/jackson-core/issues/478 patches and regressions regarding Jackson's `NonBlockingJsonParser`.
