@@ -21,7 +21,7 @@ public class AsyncParserBenchmark_byteArrayChunks extends AbstractAsyncParserBen
   @Param({"/payload/jarray_small.json", "/payload/jobject_large.json"})
   public String payloadLocation;
 
-  @Param("NON_PATCHED")
+  @Param({"CHUNKED", "NON_PATCHED"})
   public JsonFactoryPatchType patch;
 
   private List<byte[]> chunks;

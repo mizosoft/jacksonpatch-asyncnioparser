@@ -3,6 +3,7 @@ package com.github.mizosoft.jacksonpatch.asyncnioparser.benchmark;
 import com.fasterxml.jackson.core.JsonParser;
 import com.fasterxml.jackson.core.JsonToken;
 import com.github.mizosoft.jacksonpatch.asyncnioparser.PatchedJsonFactory;
+import com.github.mizosoft.jacksonpatch.asyncnioparser.PatchedJsonFactory.ChunkedParserPatch;
 import com.github.mizosoft.jacksonpatch.asyncnioparser.PatchedJsonFactory.NioWrappingParserPatch;
 import com.github.mizosoft.jacksonpatch.asyncnioparser.PatchedJsonFactory.NonPatchedFactory;
 import com.github.mizosoft.jacksonpatch.asyncnioparser.PatchedJsonFactory.TogglingParserPatch;
@@ -150,6 +151,12 @@ public class AbstractAsyncParserBenchmark {
       @Override
       PatchedJsonFactory createFactory() {
         return new NioWrappingParserPatch();
+      }
+    },
+    CHUNKED {
+      @Override
+      PatchedJsonFactory createFactory() {
+        return new ChunkedParserPatch();
       }
     };
 
